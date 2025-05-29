@@ -14,6 +14,23 @@
 - **弹窗检测** - 能检测到弹出的验证码窗口
 - **高性能后端** - 基于FastAPI的高性能OCR服务
 
+## 获取代码
+
+### 克隆仓库
+
+使用Git克隆仓库到本地：
+
+```bash
+git clone https://github.com/laozig/captcha_.git
+cd captcha_
+```
+
+或者直接从GitHub下载ZIP压缩包：
+1. 访问 [https://github.com/laozig/captcha_](https://github.com/laozig/captcha_)
+2. 点击绿色的"Code"按钮
+3. 选择"Download ZIP"
+4. 解压下载的文件到本地目录
+
 ## 系统要求
 
 - **Python 3.6+**
@@ -21,6 +38,12 @@
 - **依赖库**：ddddocr, fastapi, uvicorn, opencv-python, numpy, Pillow
 
 ## 快速入门
+
+首先，获取代码：
+```bash
+git clone https://github.com/laozig/captcha_.git
+cd captcha_
+```
 
 ### Windows用户
 
@@ -251,22 +274,27 @@ python simple_ocr_server.py
 1. 确保浏览器已安装[Tampermonkey扩展](https://www.tampermonkey.net/)
 2. 安装脚本的方法：
 
-   **方法一：通过文件安装**
+   **方法一：通过GitHub直接安装（推荐）**
+   
+   点击以下链接直接安装脚本：
+   [安装油猴脚本](https://github.com/laozig/captcha_/raw/main/captcha_solver_lite.user.js)
 
+   **方法二：通过文件安装**
+   
    - 打开Tampermonkey扩展的管理页面
    - 点击"工具"标签
    - 选择"导入"按钮
    - 选择下载的 `captcha_solver_lite.user.js` 文件
    - 点击"安装"
 
-   **方法二：通过URL安装**（如果您部署在网站上）
-
+   **方法三：通过URL安装**（如果您部署在网站上）
+   
    - 访问脚本的URL
    - Tampermonkey会自动检测并提示安装
    - 点击"安装"按钮
 
-   **方法三：手动创建**
-
+   **方法四：手动创建**
+   
    - 打开Tampermonkey扩展
    - 点击"+"创建新脚本
    - 复制 `captcha_solver_lite.user.js` 的内容
