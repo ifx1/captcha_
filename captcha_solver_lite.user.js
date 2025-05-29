@@ -3,10 +3,13 @@
 // @namespace    http://tampermonkey.net/
 // @version      0.9
 // @description  极简版验证码识别工具，支持图形验证码和滑块验证码
-// @author       You
+// @author       laozig
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
+// @homepage     https://github.com/laozig/captcha_.git
+// @updateURL    https://github.com/laozig/captcha_/raw/main/captcha_solver_lite.user.js
+// @downloadURL  https://github.com/laozig/captcha_/raw/main/captcha_solver_lite.user.js
 // ==/UserScript==
 
 (function() {
@@ -20,7 +23,7 @@
     const config = {
         autoMode: true,  // 自动识别验证码
         checkInterval: 1500,  // 自动检查间隔(毫秒)
-        debug: true,  // 是否显示调试信息
+        debug: false,  // 是否显示调试信息
         delay: 500,  // 点击验证码后的识别延迟(毫秒)
         loginDelay: 800,  // 点击登录按钮后的识别延迟(毫秒)
         popupCheckDelay: 1000,  // 弹窗检查延迟(毫秒)
@@ -55,9 +58,6 @@
     
     // 页面加载完成后执行
     function onDOMReady() {
-        console.log('[验证码] 脚本已加载，自动模式已启用');
-        console.log('[验证码] 滑块验证功能' + (config.sliderEnabled ? '已启用' : '已禁用'));
-        
         // 立即检查一次
         setTimeout(() => {
             checkForCaptcha(true);
@@ -66,7 +66,6 @@
         // 初始滑块检查
         if (config.sliderEnabled) {
             setTimeout(() => {
-                console.log('[验证码] 开始初始滑块验证码检查...');
                 checkForSliderCaptcha(true);
             }, config.initialSliderCheckDelay);
         }
@@ -80,7 +79,6 @@
         if (config.sliderEnabled) {
             setInterval(() => {
                 if (config.forceSliderCheck) {
-                    console.log('[验证码] 强制检查滑块验证码...');
                     checkForSliderCaptcha(true);
                 } else {
                     checkForSliderCaptcha();
@@ -99,11 +97,6 @@
         
         // 监听弹窗出现
         observePopups();
-        
-        // 添加滑块验证码手动触发按钮（用于测试）
-        if (config.sliderEnabled && config.debug) {
-            addSliderDebugButton();
-        }
     }
     
     // 监听页面变化，检测新加载的验证码
@@ -357,7 +350,7 @@
                 
                 // 判断是否可能是验证码图片
                 if (isCaptchaImage(img)) {
-                    console.log('[验证码] 检测到用户点击了验证码图片，等待新验证码加载...');
+                    if (config.debug) console.log('[验证码] 检测到用户点击了验证码图片，等待新验证码加载...');
                     
                     // 延迟后识别新验证码
                     setTimeout(() => {
@@ -952,7 +945,7 @@
     
     // 识别验证码
     function recognizeCaptcha(imageBase64, inputElement) {
-        console.log('[验证码] 发送到OCR服务器识别...');
+        if (config.debug) console.log('[验证码] 发送到OCR服务器识别...');
         
         GM_xmlhttpRequest({
             method: 'POST',
@@ -960,9 +953,7 @@
             headers: {
                 'Content-Type': 'application/json'
             },
-            data: JSON.stringify({
-                image: imageBase64
-            }),
+            data: JSON.stringify({ image: imageBase64 }),
             onload: function(response) {
                 try {
                     const result = JSON.parse(response.responseText);
@@ -971,122 +962,103 @@
                         const captchaText = result.data.trim();
                         
                         if (captchaText) {
-                            console.log('[验证码] 识别成功:', captchaText);
+                            if (config.debug) console.log('[验证码] 识别成功:', captchaText);
                             
-                            // 先清空输入框
-                            inputElement.value = '';
-                            // 触发清空事件
-                            inputElement.dispatchEvent(new Event('input', { bubbles: true }));
-                            
-                            // 填入验证码
+                            // 填写验证码
                             inputElement.value = captchaText;
                             
-                            // 触发事件
-                            inputElement.dispatchEvent(new Event('input', { bubbles: true }));
-                            inputElement.dispatchEvent(new Event('change', { bubbles: true }));
+                            // 触发input事件
+                            const event = new Event('input', { bubbles: true });
+                            inputElement.dispatchEvent(event);
                             
-                            // 在控制台显示绿色成功消息
-                            console.log('%c[验证码] 已自动填写: ' + captchaText, 'color: green; font-weight: bold;');
+                            // 触发change事件
+                            const changeEvent = new Event('change', { bubbles: true });
+                            inputElement.dispatchEvent(changeEvent);
                             
-                            // 查找附近的提交按钮（可选）
+                            if (config.debug) console.log('%c[验证码] 已自动填写: ' + captchaText, 'color: green; font-weight: bold;');
+                            
+                            // 尝试查找并点击提交按钮
                             tryFindAndClickSubmitButton(inputElement);
                         } else {
-                            console.log('[验证码] 识别结果为空');
+                            if (config.debug) console.log('[验证码] 识别结果为空');
                         }
                     } else {
-                        console.error('[验证码] 识别失败:', result.message || '未知错误');
+                        if (config.debug) console.log('[验证码] 识别失败:', result.message || '未知错误');
                     }
                 } catch (e) {
-                    console.error('[验证码] 处理识别结果时出错:', e);
+                    if (config.debug) console.log('[验证码] 解析OCR结果时出错:', e);
                 }
+                
+                // 清除当前处理的验证码
+                currentCaptchaImg = null;
+                currentCaptchaInput = null;
             },
             onerror: function(error) {
-                console.error('[验证码] OCR服务请求失败:', error);
+                if (config.debug) console.log('[验证码] OCR请求失败:', error);
+                
+                // 清除当前处理的验证码
+                currentCaptchaImg = null;
+                currentCaptchaInput = null;
             }
         });
     }
     
-    // 尝试查找并点击验证码提交按钮
+    // 尝试查找并点击提交按钮
     function tryFindAndClickSubmitButton(inputElement) {
-        // 查找附近的提交按钮
-        const form = inputElement.form;
+        // 查找可能的提交按钮（但不自动点击，只是提示）
+        const form = inputElement.closest('form');
         if (form) {
-            // 如果输入框在表单中，查找表单提交按钮
             const submitButton = form.querySelector('button[type="submit"], input[type="submit"]');
             if (submitButton) {
-                // 可以选择自动点击，但这里仅作为示例，不自动点击
-                // submitButton.click();
-                console.log('[验证码] 找到验证码提交按钮，但不自动点击');
+                if (config.debug) console.log('[验证码] 找到验证码提交按钮，但不自动点击');
             }
-        } else {
-            // 查找附近的提交按钮
-            const parent = inputElement.parentElement;
-            if (parent) {
-                const nearButtons = parent.querySelectorAll('button, input[type="button"], input[type="submit"]');
-                for (const button of nearButtons) {
-                    const text = getElementText(button).toLowerCase();
-                    if (text.includes('确定') || text.includes('提交') || text.includes('验证')) {
-                        // 可以选择自动点击，但这里仅作为示例，不自动点击
-                        // button.click();
-                        console.log('[验证码] 找到验证码提交按钮，但不自动点击');
-                        break;
-                    }
-                }
+        }
+        
+        // 查找表单外的可能提交按钮
+        const parentContainer = inputElement.closest('.form, .login-form, .captcha-container, .form-container');
+        if (parentContainer) {
+            const submitButton = parentContainer.querySelector('button, input[type="submit"], input[type="button"], a.btn, a.button');
+            if (submitButton && isLoginButton(submitButton)) {
+                if (config.debug) console.log('[验证码] 找到验证码提交按钮，但不自动点击');
             }
         }
     }
     
     // 主函数：检查滑块验证码
     function checkForSliderCaptcha(isForceCheck = false) {
-        if (config.debug) {
-            console.log('[验证码] ' + (isForceCheck ? '强制' : '常规') + '检查滑块验证码...');
-        }
+        if (config.debug) console.log('[验证码] ' + (isForceCheck ? '强制' : '常规') + '检查滑块验证码...');
         
         // 查找滑块验证码
-        const sliderInfo = findSliderCaptcha();
+        const result = findSliderCaptcha();
         
-        // 如果没找到滑块验证码，直接返回
-        if (!sliderInfo) {
-            if (isForceCheck && config.debug) {
-                console.log('[验证码] 未找到滑块验证码元素');
-            }
+        if (!result) {
+            if (config.debug) console.log('[验证码] 未找到滑块验证码元素');
             return;
         }
         
-        const { slider, track, container } = sliderInfo;
+        const { slider, track, container } = result;
         
-        if (config.debug) {
-            console.log('[验证码] 找到滑块验证码:');
-            console.log('- 滑块:', slider);
-            console.log('- 轨道:', track);
-            console.log('- 容器:', container);
-        }
+        if (config.debug) console.log('[验证码] 找到滑块验证码:');
         
-        // 检查滑块是否已经被处理过(简单防重复)
-        if (slider.dataset.processed && !isForceCheck) {
+        // 检查是否已处理过该滑块
+        const sliderKey = slider.outerHTML;
+        if (processedCaptchas.has(sliderKey) && !isForceCheck) {
             if (config.debug) console.log('[验证码] 该滑块已被处理过，跳过');
             return;
         }
         
-        // 标记为已处理
-        slider.dataset.processed = 'true';
+        // 记录该滑块已处理
+        processedCaptchas.add(sliderKey);
         
         // 计算滑动距离
-        calculateSlideDistance(slider, track, container)
-            .then(distance => {
-                if (!distance) {
-                    console.error('[验证码] 无法计算滑动距离');
-                    return;
-                }
-                
+        calculateSlideDistance(slider, track, container).then(distance => {
+            if (distance) {
                 if (config.debug) console.log('[验证码] 计算的滑动距离:', distance, 'px');
                 
-                // 执行滑动操作
+                // 模拟滑动
                 simulateSliderDrag(slider, distance);
-            })
-            .catch(err => {
-                console.error('[验证码] 处理滑块验证码时出错:', err);
-            });
+            }
+        });
     }
     
     // 检查元素是否可能是滑块验证码
@@ -1274,11 +1246,12 @@
             console.log('[验证码] 未能找到滑块按钮，尝试查找其他交互元素');
             
             // 查找可能的交互元素
-            const interactiveElements = container.querySelectorAll('button, [role="button"], [class*="btn"]');
+            const interactiveElements = container.querySelectorAll('div[role="button"], div.slider, div.handler, div.btn');
             for (const el of interactiveElements) {
                 if (isVisible(el)) {
-                    console.log('[验证码] 找到可能的交互元素:', el);
-                    // 注意：这里只是记录，不自动点击
+                    if (config.debug) console.log('[验证码] 找到可能的交互元素:', el);
+                    slider = el;
+                    break;
                 }
             }
         }
@@ -1666,30 +1639,6 @@
         } catch (e) {
             console.error('[验证码] 模拟滑块拖动时出错:', e);
         }
-    }
-    
-    // 添加滑块验证码调试按钮
-    function addSliderDebugButton() {
-        const button = document.createElement('button');
-        button.textContent = '测试滑块验证';
-        button.style.position = 'fixed';
-        button.style.bottom = '10px';
-        button.style.right = '10px';
-        button.style.zIndex = '9999';
-        button.style.backgroundColor = '#ff5722';
-        button.style.color = 'white';
-        button.style.border = 'none';
-        button.style.borderRadius = '4px';
-        button.style.padding = '8px 12px';
-        button.style.cursor = 'pointer';
-        button.style.boxShadow = '0 2px 5px rgba(0,0,0,0.3)';
-        
-        button.addEventListener('click', () => {
-            console.log('[验证码] 手动触发滑块验证码检查');
-            checkForSliderCaptcha(true);
-        });
-        
-        document.body.appendChild(button);
     }
     
     // 启动脚本
