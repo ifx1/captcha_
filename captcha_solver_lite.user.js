@@ -18,8 +18,8 @@
     'use strict';
     
     // OCR服务器地址 - 已修改为您的服务器IP地址
-    const OCR_SERVER = 'http://107.173.230.114:9898/ocr';
-    const SLIDE_SERVER = 'http://107.173.230.114:9898/slide';
+    const OCR_SERVER = 'http://captcha.tangyun.lat:9898/ocr';
+    const SLIDE_SERVER = 'http://captcha.tangyun.lat:9898/slide';
     
     // 配置
     const config = {
