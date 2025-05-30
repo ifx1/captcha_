@@ -7,6 +7,8 @@
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
+// @connect      *
+// @connect      107.173.230.114
 // @homepage     https://github.com/laozig/captcha_.git
 // @updateURL    https://github.com/laozig/captcha_/raw/main/captcha_solver_lite.user.js
 // @downloadURL  https://github.com/laozig/captcha_/raw/main/captcha_solver_lite.user.js
@@ -15,15 +17,15 @@
 (function() {
     'use strict';
     
-    // OCR服务器地址
-    const OCR_SERVER = 'http://localhost:9898/ocr';
-    const SLIDE_SERVER = 'http://localhost:9898/slide';
+    // OCR服务器地址 - 已修改为您的服务器IP地址
+    const OCR_SERVER = 'http://107.173.230.114:9898/ocr';
+    const SLIDE_SERVER = 'http://107.173.230.114:9898/slide';
     
     // 配置
     const config = {
         autoMode: true,  // 自动识别验证码
         checkInterval: 1500,  // 自动检查间隔(毫秒)
-        debug: false,  // 是否显示调试信息
+        debug: true,  // 是否显示调试信息
         delay: 500,  // 点击验证码后的识别延迟(毫秒)
         loginDelay: 800,  // 点击登录按钮后的识别延迟(毫秒)
         popupCheckDelay: 1000,  // 弹窗检查延迟(毫秒)
@@ -54,6 +56,41 @@
         } else {
             onDOMReady();
         }
+        
+        // 显示服务器连接信息
+        if (config.debug) {
+            console.log('[验证码] 服务器地址: ' + OCR_SERVER);
+            console.log('[验证码] 调试模式已开启');
+            
+            // 测试服务器连接
+            testServerConnection();
+        }
+    }
+    
+    // 测试服务器连接
+    function testServerConnection() {
+        console.log('[验证码] 正在测试服务器连接...');
+        
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: OCR_SERVER.replace('/ocr', '/'),
+            timeout: 5000,
+            onload: function(response) {
+                try {
+                    const result = JSON.parse(response.responseText);
+                    console.log('[验证码] 服务器连接成功:', result);
+                } catch (e) {
+                    console.log('[验证码] 服务器响应解析错误:', e);
+                }
+            },
+            onerror: function(error) {
+                console.log('[验证码] 服务器连接失败:', error);
+                console.log('[验证码] 请确认服务器地址是否正确，并检查服务器是否已启动');
+            },
+            ontimeout: function() {
+                console.log('[验证码] 服务器连接超时，请检查服务器是否已启动');
+            }
+        });
     }
     
     // 页面加载完成后执行
@@ -954,8 +991,11 @@
                 'Content-Type': 'application/json'
             },
             data: JSON.stringify({ image: imageBase64 }),
+            timeout: 10000, // 10秒超时
             onload: function(response) {
                 try {
+                    if (config.debug) console.log('[验证码] 收到服务器响应:', response.responseText);
+                    
                     const result = JSON.parse(response.responseText);
                     
                     if (result.code === 0 && result.data) {
@@ -995,6 +1035,15 @@
             },
             onerror: function(error) {
                 if (config.debug) console.log('[验证码] OCR请求失败:', error);
+                console.log('[验证码] 请检查服务器地址是否正确，以及服务器是否已启动');
+                
+                // 清除当前处理的验证码
+                currentCaptchaImg = null;
+                currentCaptchaInput = null;
+            },
+            ontimeout: function() {
+                if (config.debug) console.log('[验证码] OCR请求超时');
+                console.log('[验证码] 请检查服务器是否已启动，网络连接是否正常');
                 
                 // 清除当前处理的验证码
                 currentCaptchaImg = null;
