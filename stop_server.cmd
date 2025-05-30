@@ -19,11 +19,31 @@ if %ERRORLEVEL% equ 0 (
     if %ERRORLEVEL% equ 0 (
         echo 服务已停止
     ) else (
-        echo 未找到正在运行的服务
+        :: 尝试查找可能在虚拟环境中运行的Python进程
+        echo 尝试查找可能在虚拟环境中运行的进程...
+        tasklist | findstr "python" > temp_py.txt
+        for /f "tokens=2" %%i in ('findstr "python" temp_py.txt') do (
+            echo 发现Python进程: %%i
+            taskkill /F /PID %%i /T 2>nul
+            if %ERRORLEVEL% equ 0 (
+                echo 已停止进程: %%i
+            )
+        )
+        if exist temp_py.txt del /f /q temp_py.txt
+        
+        echo 所有可能的服务进程已尝试停止
     )
 )
 
 :: 删除临时文件
 if exist temp.txt del /f /q temp.txt
+
+:: 如果虚拟环境处于激活状态，尝试退出
+if defined VIRTUAL_ENV (
+    echo 检测到活跃的虚拟环境，正在退出...
+    call deactivate 2>nul
+)
+
+echo 停止操作完成
 
 pause 
