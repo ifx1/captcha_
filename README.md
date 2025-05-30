@@ -40,14 +40,33 @@ chmod +x auto_setup.sh
 
 ### 3. 安装客户端脚本
 
+#### 方法一：直接安装URL（推荐）
+
 1. 在浏览器中安装 [Tampermonkey](https://www.tampermonkey.net/) 扩展
-2. [点击此处安装脚本](https://github.com/laozig/captcha_/raw/main/captcha_solver_lite.user.js)
-3. 修改脚本中的服务器地址为您的服务器IP地址:
+2. 点击下面的链接直接安装脚本：
+
+   [**点击此处安装验证码识别脚本**](https://github.com/laozig/captcha_/raw/main/captcha_solver_lite.user.js)
+
+#### 方法二：手动安装
+
+1. 在浏览器中安装 [Tampermonkey](https://www.tampermonkey.net/) 扩展
+2. 点击Tampermonkey图标 → 创建新脚本
+3. 复制 captcha_solver_lite.user.js 的内容并粘贴
+4. 保存脚本
+
+#### 配置服务器地址
+
+安装脚本后，需要修改脚本中的服务器地址：
+
+1. 点击Tampermonkey图标 → 管理面板
+2. 找到"极简验证码识别工具"脚本并点击编辑
+3. 修改以下两行为您的服务器IP地址：
    ```javascript
    // OCR服务器地址 - 修改为您的服务器IP地址
    const OCR_SERVER = 'http://您的服务器IP:9898/ocr';
    const SLIDE_SERVER = 'http://您的服务器IP:9898/slide';
    ```
+4. 保存脚本 (Ctrl+S)
 
 ### 4. 停止服务
 
@@ -78,6 +97,10 @@ ImportError: libGL.so.1: cannot open shared object file: No such file or directo
 ```bash
 apt-get install -y libgl1-mesa-glx libglib2.0-0 libsm6 libxrender1 libxext6
 ```
+
+### 脚本更新
+
+油猴脚本配置了自动更新URL，当GitHub仓库中的脚本更新时，油猴会自动检测并提示更新。
 
 ## API接口
 
