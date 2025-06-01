@@ -8,7 +8,7 @@
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
 // @connect      *
-// @connect      107.173.230.114
+// @connect      103.97.179.230
 // @homepage     https://github.com/laozig/captcha_.git
 // @updateURL    https://github.com/laozig/captcha_/raw/main/captcha_solver_lite.user.js
 // @downloadURL  https://github.com/laozig/captcha_/raw/main/captcha_solver_lite.user.js

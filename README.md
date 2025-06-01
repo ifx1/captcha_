@@ -124,6 +124,110 @@ Content-Type: application/json
 返回: {"code": 0, "data": {"x": 150, "y": 0}}
 ```
 
+## 更新系统
+
+### 从GitHub更新文件到服务器
+
+#### 方法一：使用Git拉取更新
+
+如果您是通过Git克隆的仓库，可以直接拉取最新更新：
+
+**Linux/Mac系统**:
+```bash
+# 先停止服务
+./auto_setup.sh stop
+
+# 拉取最新代码
+git pull
+
+# 重新启动服务
+./auto_setup.sh
+```
+
+**Windows系统**:
+```bash
+# 先停止服务
+auto_setup.cmd stop
+
+# 拉取最新代码
+git pull
+
+# 重新启动服务
+auto_setup.cmd
+```
+
+#### 方法二：手动下载并替换文件
+
+1. 从GitHub下载最新文件：
+   - 访问 https://github.com/laozig/captcha_
+   - 点击"Code"按钮，然后选择"Download ZIP"
+   - 解压下载的ZIP文件
+
+2. 替换服务器上的文件：
+   ```bash
+   # 先停止服务
+   ./auto_setup.sh stop  # 或 auto_setup.cmd stop (Windows)
+   
+   # 复制新文件替换旧文件
+   cp -r 下载解压路径/* 服务器项目路径/
+   
+   # 重新启动服务
+   ./auto_setup.sh  # 或 auto_setup.cmd (Windows)
+   ```
+
+## 开放服务器端口
+
+服务器需要开放9898端口以供油猴脚本访问。根据您的环境，可以使用以下方法开放端口：
+
+### Linux系统（使用UFW防火墙）
+
+```bash
+# 安装UFW（如果尚未安装）
+sudo apt-get install ufw
+
+# 开放9898端口
+sudo ufw allow 9898/tcp
+
+# 重启防火墙
+sudo ufw disable
+sudo ufw enable
+```
+
+### Linux系统（使用iptables）
+
+```bash
+# 开放9898端口
+sudo iptables -A INPUT -p tcp --dport 9898 -j ACCEPT
+
+# 保存规则（取决于发行版）
+# Debian/Ubuntu
+sudo netfilter-persistent save
+# CentOS/RHEL
+sudo service iptables save
+```
+
+### Windows系统
+
+通过Windows防火墙添加入站规则：
+
+1. 打开"控制面板" -> "系统和安全" -> "Windows Defender防火墙"
+2. 点击"高级设置"
+3. 在左侧选择"入站规则"
+4. 点击右侧的"新建规则..."
+5. 选择"端口"，点击"下一步"
+6. 选择"TCP"和"特定本地端口"，输入"9898"
+7. 点击"下一步"，选择"允许连接"
+8. 点击"下一步"，保持默认选择
+9. 点击"下一步"，输入规则名称（如"OCR服务端口"）
+10. 点击"完成"
+
+### 云服务器（如AWS、阿里云、腾讯云等）
+
+请登录您的云服务提供商的控制台，在安全组或防火墙设置中添加以下规则：
+- 协议：TCP
+- 端口：9898
+- 来源：0.0.0.0/0（允许所有IP访问）或限制为特定IP
+
 ## 许可证
 
 MIT
