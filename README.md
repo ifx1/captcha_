@@ -132,28 +132,64 @@ Content-Type: application/json
 
 如果您是通过Git克隆的仓库，可以直接拉取最新更新：
 
-**Linux/Mac系统**:
+**基本更新方法（Linux/Mac/Windows通用）**:
 ```bash
 # 先停止服务
-./auto_setup.sh stop
+./auto_setup.sh stop  # Linux/Mac
+# 或
+auto_setup.cmd stop  # Windows
+
+# 查看当前状态
+git status
 
 # 拉取最新代码
 git pull
 
 # 重新启动服务
-./auto_setup.sh
+./auto_setup.sh  # Linux/Mac
+# 或
+auto_setup.cmd  # Windows
 ```
 
-**Windows系统**:
+**如果git pull只更新了部分文件，可以尝试以下方法**:
+
 ```bash
-# 先停止服务
-auto_setup.cmd stop
+# 1. 查看远程仓库信息
+git remote -v
 
-# 拉取最新代码
-git pull
+# 2. 确保本地分支跟踪正确的远程分支
+git branch -vv
 
-# 重新启动服务
-auto_setup.cmd
+# 3. 重置本地更改（注意：这会丢失未提交的更改）
+git reset --hard
+
+# 4. 获取所有最新内容
+git fetch --all
+
+# 5. 强制更新到最新版本
+git pull --force
+# 或者
+git reset --hard origin/main  # 假设主分支是main，如果是master则改为master
+```
+
+**完全重新克隆的方法（适用于本地仓库有问题的情况）**:
+```bash
+# 1. 备份重要的本地修改（如有）
+cp -r captcha_/your_important_files /backup/location/
+
+# 2. 删除当前仓库
+rm -rf captcha_
+
+# 3. 重新克隆
+git clone https://github.com/laozig/captcha_.git
+
+# 4. 进入目录
+cd captcha_
+
+# 5. 启动服务
+./auto_setup.sh  # Linux/Mac
+# 或
+auto_setup.cmd  # Windows
 ```
 
 #### 方法二：手动下载并替换文件
