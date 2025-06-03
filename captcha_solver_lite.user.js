@@ -4,11 +4,12 @@
 // @version      0.9
 // @description  极简版验证码识别工具，支持图形验证码和滑块验证码
 // @author       laozig
+// @license      MIT
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
 // @connect      *
-// @connect      103.97.179.230
+// @connect      captcha.tangyun.lat
 // @homepage     https://github.com/laozig/captcha_.git
 // @updateURL    https://github.com/laozig/captcha_/raw/main/captcha_solver_lite.user.js
 // @downloadURL  https://github.com/laozig/captcha_/raw/main/captcha_solver_lite.user.js
