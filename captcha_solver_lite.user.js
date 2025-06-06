@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         极简验证码识别工具
 // @namespace    http://tampermonkey.net/
-// @version      0.9
+// @version      1.0
 // @description  极简版验证码识别工具，支持图形验证码和滑块验证码
 // @author       laozig
 // @license      MIT
@@ -9,6 +9,10 @@
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
 // @connect      *
+// @connect      127.0.0.1
+// @connect      192.168.*.*
+// @connect      10.*.*.*
+// @connect      172.*.*.*
 // @connect      captcha.tangyun.lat
 // @homepage     https://github.com/laozig/captcha_.git
 // @updateURL    https://github.com/laozig/captcha_/raw/main/captcha_solver_lite.user.js
@@ -39,7 +43,15 @@
         sliderAccuracy: 5,  // 滑块拖动精度，像素误差范围
         initialSliderCheckDelay: 2000,  // 初始滑块检查延迟(毫秒)
         forceSliderCheck: true,  // 强制定期检查滑块验证码
-        useSlideAPI: true  // 是否使用服务器API进行滑块分析
+        useSlideAPI: true,  // 是否使用服务器API进行滑块分析
+        maxRetries: 3,  // 最大重试次数
+        retryDelay: 1000,  // 重试间隔(毫秒)
+        useAdaptiveDetection: true,  // 是否使用自适应检测
+        useOfflineMode: true,  // 在服务器不可用时启用离线模式
+        rememberSuccessPatterns: true,  // 记住成功的识别模式
+        successPatternExpiry: 7,  // 成功模式过期天数
+        optimizeImageQuality: true,  // 优化图片质量
+        imageCompressionQuality: 0.8  // 图片压缩质量(0-1)
     };
     
     // 存储识别过的验证码和当前处理的验证码
@@ -48,6 +60,168 @@
     let currentCaptchaInput = null;
     let popupCheckCount = 0;
     let popupCheckTimer = null;
+    let retryCount = 0;
+    
+    // 存储成功模式和网站特征
+    const storageKey = 'captchaSolverData';
+    const sitePatterns = loadSitePatterns();
+    
+    // 离线模式支持 - 简单OCR模型（仅支持简单数字和字母）
+    const offlineOcrModels = {
+        digits: {
+            // 0-9的简单特征向量模板（实际应用需要更复杂的模型）
+            '0': [1,1,1,1,0,1,1,0,1,1,0,1,1,1,1],
+            '1': [0,0,1,0,0,1,0,0,1,0,0,1,0,0,1],
+            '2': [1,1,1,0,0,1,1,1,1,1,0,0,1,1,1],
+            '3': [1,1,1,0,0,1,1,1,1,0,0,1,1,1,1],
+            '4': [1,0,1,1,0,1,1,1,1,0,0,1,0,0,1],
+            '5': [1,1,1,1,0,0,1,1,1,0,0,1,1,1,1],
+            '6': [1,1,1,1,0,0,1,1,1,1,0,1,1,1,1],
+            '7': [1,1,1,0,0,1,0,0,1,0,0,1,0,0,1],
+            '8': [1,1,1,1,0,1,1,1,1,1,0,1,1,1,1],
+            '9': [1,1,1,1,0,1,1,1,1,0,0,1,1,1,1]
+        },
+        active: false
+    };
+    
+    // 载入网站特征识别模式
+    function loadSitePatterns() {
+        try {
+            const savedData = localStorage.getItem(storageKey);
+            if (savedData) {
+                const data = JSON.parse(savedData);
+                // 清理过期数据
+                const now = Date.now();
+                Object.keys(data).forEach(host => {
+                    if (data[host].expiry && data[host].expiry < now) {
+                        delete data[host];
+                    }
+                });
+                return data;
+            }
+        } catch (e) {
+            console.error('[验证码] 载入存储数据失败:', e);
+        }
+        return {};
+    }
+    
+    // 保存网站特征识别模式
+    function saveSitePatterns() {
+        try {
+            localStorage.setItem(storageKey, JSON.stringify(sitePatterns));
+            if (config.debug) console.log('[验证码] 已保存网站识别模式');
+        } catch (e) {
+            console.error('[验证码] 保存数据失败:', e);
+        }
+    }
+    
+    // 记录成功的识别模式
+    function recordSuccessPattern(imageData, result) {
+        if (!config.rememberSuccessPatterns) return;
+        
+        const host = window.location.hostname;
+        const now = Date.now();
+        const expiry = now + (config.successPatternExpiry * 86400000); // 转换天数为毫秒
+        
+        // 为当前网站创建或更新记录
+        if (!sitePatterns[host]) {
+            sitePatterns[host] = {
+                patterns: [],
+                selectors: collectSelectors(),
+                expiry: expiry
+            };
+        }
+        
+        // 添加新的识别结果
+        sitePatterns[host].patterns.push({
+            hash: simpleImageHash(imageData),
+            result: result,
+            timestamp: now
+        });
+        
+        // 最多保存10个模式
+        if (sitePatterns[host].patterns.length > 10) {
+            sitePatterns[host].patterns.shift();
+        }
+        
+        // 更新过期时间
+        sitePatterns[host].expiry = expiry;
+        
+        // 保存更新后的数据
+        saveSitePatterns();
+    }
+    
+    // 收集当前页面的验证码相关选择器
+    function collectSelectors() {
+        const selectors = {};
+        
+        // 查找可能的验证码图片和输入框
+        const captchaImg = findCaptchaImage();
+        if (captchaImg) {
+            selectors.img = getElementSelector(captchaImg);
+            
+            const input = findCaptchaInput(captchaImg);
+            if (input) {
+                selectors.input = getElementSelector(input);
+            }
+        }
+        
+        return selectors;
+    }
+    
+    // 获取元素的简化选择器
+    function getElementSelector(element) {
+        if (!element) return null;
+        
+        // 尝试使用ID
+        if (element.id) return `#${element.id}`;
+        
+        // 尝试使用类名
+        if (element.className) {
+            const classList = Array.from(element.classList).join('.');
+            if (classList) return `.${classList}`;
+        }
+        
+        // 使用标签名和属性组合
+        let selector = element.tagName.toLowerCase();
+        if (element.name) selector += `[name="${element.name}"]`;
+        if (element.type) selector += `[type="${element.type}"]`;
+        
+        return selector;
+    }
+    
+    // 计算简单的图像哈希
+    function simpleImageHash(imageData) {
+        // 一个非常简单的散列算法，实际应用可以使用更复杂的算法
+        let hash = 0;
+        for (let i = 0; i < imageData.length; i++) {
+            const char = imageData.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash; // 转换为32位整数
+        }
+        return hash.toString(16);
+    }
+    
+    // 检查是否有适合当前站点的缓存模式
+    function checkCachedPattern(imageData) {
+        if (!config.rememberSuccessPatterns) return null;
+        
+        const host = window.location.hostname;
+        if (!sitePatterns[host] || !sitePatterns[host].patterns.length) {
+            return null;
+        }
+        
+        const hash = simpleImageHash(imageData);
+        
+        // 查找匹配的哈希
+        const match = sitePatterns[host].patterns.find(p => p.hash === hash);
+        if (match) {
+            if (config.debug) console.log('[验证码] 找到匹配的缓存识别结果:', match.result);
+            return match.result;
+        }
+        
+        return null;
+    }
     
     // 初始化
     function init() {
@@ -76,6 +250,10 @@
             method: 'GET',
             url: OCR_SERVER.replace('/ocr', '/'),
             timeout: 5000,
+            anonymous: true,
+            nocache: true,
+            revalidate: true,
+            fetch: true,
             onload: function(response) {
                 try {
                     const result = JSON.parse(response.responseText);
@@ -940,7 +1118,19 @@
             
             try {
                 ctx.drawImage(img, 0, 0);
-                return canvas.toDataURL('image/png').split(',')[1];
+                
+                // 图片优化处理
+                if (config.optimizeImageQuality) {
+                    // 增强对比度和锐度
+                    enhanceImageContrast(ctx, canvas.width, canvas.height);
+                    
+                    // 去除噪点
+                    removeNoise(ctx, canvas.width, canvas.height);
+                    
+                    return canvas.toDataURL('image/jpeg', config.imageCompressionQuality).split(',')[1];
+                } else {
+                    return canvas.toDataURL('image/png').split(',')[1];
+                }
             } catch (e) {
                 console.error('[验证码] 绘制图片到Canvas失败，可能是跨域问题');
                 
@@ -958,6 +1148,257 @@
         }
     }
     
+    // 增强图片对比度
+    function enhanceImageContrast(ctx, width, height) {
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const data = imageData.data;
+        
+        // 简单的对比度增强算法
+        const contrast = 1.2; // 对比度因子
+        const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+        
+        for (let i = 0; i < data.length; i += 4) {
+            // 对RGB通道应用对比度增强
+            data[i] = factor * (data[i] - 128) + 128; // R
+            data[i+1] = factor * (data[i+1] - 128) + 128; // G
+            data[i+2] = factor * (data[i+2] - 128) + 128; // B
+            // Alpha通道保持不变
+        }
+        
+        ctx.putImageData(imageData, 0, 0);
+    }
+    
+    // 去除图片噪点
+    function removeNoise(ctx, width, height) {
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const data = imageData.data;
+        const tempData = new Uint8ClampedArray(data);
+        
+        // 简单的中值滤波去噪
+        for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+                const idx = (y * width + x) * 4;
+                
+                // 检测孤立点（与周围像素差异较大的点）
+                const isNoise = isNoisePixel(data, idx, width);
+                
+                if (isNoise) {
+                    // 用周围像素的平均值替换噪点
+                    const avgColor = getAverageColor(data, x, y, width);
+                    tempData[idx] = avgColor.r;
+                    tempData[idx+1] = avgColor.g;
+                    tempData[idx+2] = avgColor.b;
+                }
+            }
+        }
+        
+        // 应用处理后的数据
+        for (let i = 0; i < data.length; i++) {
+            data[i] = tempData[i];
+        }
+        
+        ctx.putImageData(imageData, 0, 0);
+    }
+    
+    // 判断是否为噪点
+    function isNoisePixel(data, idx, width) {
+        // 获取当前像素的RGB值
+        const r = data[idx];
+        const g = data[idx+1];
+        const b = data[idx+2];
+        
+        // 获取上下左右像素的平均值
+        const up = getPixelAverage(data, idx - width * 4);
+        const down = getPixelAverage(data, idx + width * 4);
+        const left = getPixelAverage(data, idx - 4);
+        const right = getPixelAverage(data, idx + 4);
+        
+        // 计算当前像素与周围像素的差异
+        const avgDiff = (
+            Math.abs(r - up) + Math.abs(r - down) + Math.abs(r - left) + Math.abs(r - right) +
+            Math.abs(g - up) + Math.abs(g - down) + Math.abs(g - left) + Math.abs(g - right) +
+            Math.abs(b - up) + Math.abs(b - down) + Math.abs(b - left) + Math.abs(b - right)
+        ) / 12;
+        
+        // 差异过大认为是噪点
+        return avgDiff > 50;
+    }
+    
+    // 获取像素RGB的平均值
+    function getPixelAverage(data, idx) {
+        if (idx < 0 || idx >= data.length) return 128;
+        return (data[idx] + data[idx+1] + data[idx+2]) / 3;
+    }
+    
+    // 获取周围像素的平均颜色
+    function getAverageColor(data, x, y, width) {
+        const neighbors = [
+            {x: x-1, y: y-1}, {x: x, y: y-1}, {x: x+1, y: y-1},
+            {x: x-1, y: y},                     {x: x+1, y: y},
+            {x: x-1, y: y+1}, {x: x, y: y+1}, {x: x+1, y: y+1}
+        ];
+        
+        let totalR = 0, totalG = 0, totalB = 0, count = 0;
+        
+        for (const pos of neighbors) {
+            const idx = (pos.y * width + pos.x) * 4;
+            if (idx >= 0 && idx < data.length - 3) {
+                totalR += data[idx];
+                totalG += data[idx+1];
+                totalB += data[idx+2];
+                count++;
+            }
+        }
+        
+        return {
+            r: count > 0 ? Math.round(totalR / count) : 128,
+            g: count > 0 ? Math.round(totalG / count) : 128,
+            b: count > 0 ? Math.round(totalB / count) : 128
+        };
+    }
+    
+    // 离线识别验证码（简单数字识别）
+    function offlineRecognizeCaptcha(imageBase64) {
+        if (!config.useOfflineMode) return null;
+        
+        try {
+            // 创建临时图片并加载base64数据
+            const tempImg = new Image();
+            return new Promise((resolve) => {
+                tempImg.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = tempImg.width;
+                    canvas.height = tempImg.height;
+                    
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(tempImg, 0, 0);
+                    
+                    // 获取图像数据并转为黑白
+                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    const bwData = convertToBW(imageData.data, canvas.width, canvas.height);
+                    
+                    // 分割字符
+                    const chars = segmentCharacters(bwData, canvas.width, canvas.height);
+                    
+                    // 识别每个字符
+                    let result = '';
+                    for (const charData of chars) {
+                        const digit = recognizeDigit(charData);
+                        if (digit !== null) {
+                            result += digit;
+                        }
+                    }
+                    
+                    if (config.debug) console.log('[验证码] 离线识别结果:', result);
+                    resolve(result);
+                };
+                
+                tempImg.onerror = () => {
+                    resolve(null);
+                };
+                
+                tempImg.src = 'data:image/jpeg;base64,' + imageBase64;
+            });
+        } catch (e) {
+            console.error('[验证码] 离线识别失败:', e);
+            return null;
+        }
+    }
+    
+    // 转换图像为黑白
+    function convertToBW(data, width, height) {
+        const bwData = new Uint8Array(width * height);
+        
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const idx = (y * width + x) * 4;
+                // 计算灰度值
+                const gray = (data[idx] * 0.299 + data[idx+1] * 0.587 + data[idx+2] * 0.114);
+                // 二值化
+                bwData[y * width + x] = gray < 128 ? 1 : 0;
+            }
+        }
+        
+        return bwData;
+    }
+    
+    // 分割字符
+    function segmentCharacters(bwData, width, height) {
+        const chars = [];
+        const charWidth = Math.floor(width / 4); // 假设验证码有4个字符
+        
+        for (let i = 0; i < 4; i++) {
+            const startX = i * charWidth;
+            const charData = extractCharData(bwData, width, height, startX, startX + charWidth);
+            chars.push(charData);
+        }
+        
+        return chars;
+    }
+    
+    // 提取单个字符的数据
+    function extractCharData(bwData, width, height, startX, endX) {
+        const charWidth = endX - startX;
+        const charData = new Uint8Array(15); // 简化为5x3特征向量
+        
+        // 将字符区域划分为5x3网格，并计算每个网格的黑色像素占比
+        const gridWidth = Math.floor(charWidth / 3);
+        const gridHeight = Math.floor(height / 5);
+        
+        for (let gy = 0; gy < 5; gy++) {
+            for (let gx = 0; gx < 3; gx++) {
+                let blackCount = 0;
+                let totalCount = 0;
+                
+                for (let y = gy * gridHeight; y < (gy+1) * gridHeight && y < height; y++) {
+                    for (let x = startX + gx * gridWidth; x < startX + (gx+1) * gridWidth && x < endX; x++) {
+                        if (x >= 0 && x < width) {
+                            if (bwData[y * width + x] === 1) {
+                                blackCount++;
+                            }
+                            totalCount++;
+                        }
+                    }
+                }
+                
+                // 如果黑色像素占比超过20%，则认为该网格有笔画
+                charData[gy * 3 + gx] = (totalCount > 0 && blackCount / totalCount > 0.2) ? 1 : 0;
+            }
+        }
+        
+        return charData;
+    }
+    
+    // 识别单个数字
+    function recognizeDigit(charData) {
+        // 简单的模板匹配
+        const digits = offlineOcrModels.digits;
+        let bestMatch = null;
+        let bestScore = 0;
+        
+        for (const digit in digits) {
+            const template = digits[digit];
+            let score = 0;
+            
+            // 计算与模板的匹配分数
+            for (let i = 0; i < charData.length; i++) {
+                if (charData[i] === template[i]) {
+                    score++;
+                }
+            }
+            
+            // 计算匹配率
+            const matchRate = score / charData.length;
+            
+            if (matchRate > 0.8 && matchRate > bestScore) {
+                bestScore = matchRate;
+                bestMatch = digit;
+            }
+        }
+        
+        return bestMatch;
+    }
+    
     // 通过GM_xmlhttpRequest获取图片
     function fetchImage(url) {
         return new Promise((resolve, reject) => {
@@ -965,6 +1406,10 @@
                 method: 'GET',
                 url: url,
                 responseType: 'arraybuffer',
+                anonymous: true,
+                nocache: true,
+                revalidate: true,
+                fetch: true,
                 onload: function(response) {
                     try {
                         const binary = new Uint8Array(response.response);
@@ -983,6 +1428,49 @@
     
     // 识别验证码
     function recognizeCaptcha(imageBase64, inputElement) {
+        if (config.debug) console.log('[验证码] 开始识别验证码...');
+        
+        // 重置重试计数
+        retryCount = 0;
+        
+        // 首先检查缓存的识别模式
+        const cachedResult = checkCachedPattern(imageBase64);
+        if (cachedResult) {
+            if (config.debug) console.log('[验证码] 使用缓存识别结果:', cachedResult);
+            fillCaptchaInput(inputElement, cachedResult);
+            return;
+        }
+        
+        // 尝试离线识别
+        tryRecognizeCaptcha(imageBase64, inputElement);
+    }
+    
+    // 尝试识别验证码，包含重试机制
+    async function tryRecognizeCaptcha(imageBase64, inputElement, isRetry = false) {
+        if (isRetry) {
+            if (retryCount >= config.maxRetries) {
+                if (config.debug) console.log('[验证码] 已达到最大重试次数');
+                return;
+            }
+            retryCount++;
+            if (config.debug) console.log(`[验证码] 第${retryCount}次重试识别`);
+        }
+        
+        // 启用离线模式时，先尝试离线识别
+        if (config.useOfflineMode && (offlineOcrModels.active || isRetry)) {
+            try {
+                const offlineResult = await offlineRecognizeCaptcha(imageBase64);
+                if (offlineResult && offlineResult.length > 0) {
+                    if (config.debug) console.log('[验证码] 离线识别成功:', offlineResult);
+                    fillCaptchaInput(inputElement, offlineResult);
+                    return;
+                }
+            } catch (e) {
+                console.error('[验证码] 离线识别异常:', e);
+            }
+        }
+        
+        // 在线识别
         if (config.debug) console.log('[验证码] 发送到OCR服务器识别...');
         
         GM_xmlhttpRequest({
@@ -993,6 +1481,10 @@
             },
             data: JSON.stringify({ image: imageBase64 }),
             timeout: 10000, // 10秒超时
+            anonymous: true,
+            nocache: true,
+            revalidate: true,
+            fetch: true,
             onload: function(response) {
                 try {
                     if (config.debug) console.log('[验证码] 收到服务器响应:', response.responseText);
@@ -1003,54 +1495,107 @@
                         const captchaText = result.data.trim();
                         
                         if (captchaText) {
-                            if (config.debug) console.log('[验证码] 识别成功:', captchaText);
+                            // 记录成功识别的模式
+                            recordSuccessPattern(imageBase64, captchaText);
                             
                             // 填写验证码
-                            inputElement.value = captchaText;
-                            
-                            // 触发input事件
-                            const event = new Event('input', { bubbles: true });
-                            inputElement.dispatchEvent(event);
-                            
-                            // 触发change事件
-                            const changeEvent = new Event('change', { bubbles: true });
-                            inputElement.dispatchEvent(changeEvent);
-                            
-                            if (config.debug) console.log('%c[验证码] 已自动填写: ' + captchaText, 'color: green; font-weight: bold;');
-                            
-                            // 尝试查找并点击提交按钮
-                            tryFindAndClickSubmitButton(inputElement);
+                            fillCaptchaInput(inputElement, captchaText);
                         } else {
                             if (config.debug) console.log('[验证码] 识别结果为空');
+                            if (!isRetry) {
+                                // 延迟后重试
+                                setTimeout(() => {
+                                    tryRecognizeCaptcha(imageBase64, inputElement, true);
+                                }, config.retryDelay);
+                            }
                         }
                     } else {
                         if (config.debug) console.log('[验证码] 识别失败:', result.message || '未知错误');
+                        
+                        // 如果服务器识别失败，激活离线模式
+                        if (!isRetry) {
+                            offlineOcrModels.active = true;
+                            setTimeout(() => {
+                                tryRecognizeCaptcha(imageBase64, inputElement, true);
+                            }, config.retryDelay);
+                        }
                     }
                 } catch (e) {
                     if (config.debug) console.log('[验证码] 解析OCR结果时出错:', e);
+                    
+                    // 解析出错，可能是服务器问题，激活离线模式并重试
+                    if (!isRetry) {
+                        offlineOcrModels.active = true;
+                        setTimeout(() => {
+                            tryRecognizeCaptcha(imageBase64, inputElement, true);
+                        }, config.retryDelay);
+                    }
                 }
                 
                 // 清除当前处理的验证码
-                currentCaptchaImg = null;
-                currentCaptchaInput = null;
+                if (isRetry || retryCount >= config.maxRetries) {
+                    currentCaptchaImg = null;
+                    currentCaptchaInput = null;
+                }
             },
             onerror: function(error) {
                 if (config.debug) console.log('[验证码] OCR请求失败:', error);
                 console.log('[验证码] 请检查服务器地址是否正确，以及服务器是否已启动');
                 
-                // 清除当前处理的验证码
-                currentCaptchaImg = null;
-                currentCaptchaInput = null;
+                // 网络错误，激活离线模式并重试
+                if (!isRetry) {
+                    offlineOcrModels.active = true;
+                    setTimeout(() => {
+                        tryRecognizeCaptcha(imageBase64, inputElement, true);
+                    }, config.retryDelay);
+                } else {
+                    // 清除当前处理的验证码
+                    currentCaptchaImg = null;
+                    currentCaptchaInput = null;
+                }
             },
             ontimeout: function() {
                 if (config.debug) console.log('[验证码] OCR请求超时');
                 console.log('[验证码] 请检查服务器是否已启动，网络连接是否正常');
                 
-                // 清除当前处理的验证码
-                currentCaptchaImg = null;
-                currentCaptchaInput = null;
+                // 超时，激活离线模式并重试
+                if (!isRetry) {
+                    offlineOcrModels.active = true;
+                    setTimeout(() => {
+                        tryRecognizeCaptcha(imageBase64, inputElement, true);
+                    }, config.retryDelay);
+                } else {
+                    // 清除当前处理的验证码
+                    currentCaptchaImg = null;
+                    currentCaptchaInput = null;
+                }
             }
         });
+    }
+    
+    // 填写验证码输入框
+    function fillCaptchaInput(inputElement, captchaText) {
+        if (config.debug) console.log('[验证码] 识别成功:', captchaText);
+        
+        // 填写验证码
+        inputElement.value = captchaText;
+        
+        // 触发input事件
+        const event = new Event('input', { bubbles: true });
+        inputElement.dispatchEvent(event);
+        
+        // 触发change事件
+        const changeEvent = new Event('change', { bubbles: true });
+        inputElement.dispatchEvent(changeEvent);
+        
+        if (config.debug) console.log('%c[验证码] 已自动填写: ' + captchaText, 'color: green; font-weight: bold;');
+        
+        // 尝试查找并点击提交按钮
+        tryFindAndClickSubmitButton(inputElement);
+        
+        // 清除当前处理的验证码
+        currentCaptchaImg = null;
+        currentCaptchaInput = null;
     }
     
     // 尝试查找并点击提交按钮
@@ -1500,6 +2045,10 @@
                             'Content-Type': 'application/json'
                         },
                         data: JSON.stringify(data),
+                        anonymous: true,
+                        nocache: true,
+                        revalidate: true,
+                        fetch: true,
                         onload: function(response) {
                             try {
                                 const result = JSON.parse(response.responseText);
