@@ -1148,46 +1148,82 @@
         }
     }
     
-    // 增强图片对比度
+    // 图像优化处理
     function enhanceImageContrast(ctx, width, height) {
         const imageData = ctx.getImageData(0, 0, width, height);
         const data = imageData.data;
         
-        // 简单的对比度增强算法
-        const contrast = 1.2; // 对比度因子
+        // 获取图像直方图
+        const histogram = new Array(256).fill(0);
+        for (let i = 0; i < data.length; i += 4) {
+            const gray = Math.floor((data[i] + data[i+1] + data[i+2]) / 3);
+            histogram[gray]++;
+        }
+        
+        // 计算累积直方图
+        const cdf = new Array(256).fill(0);
+        cdf[0] = histogram[0];
+        for (let i = 1; i < 256; i++) {
+            cdf[i] = cdf[i-1] + histogram[i];
+        }
+        
+        // 直方图均衡化
+        const totalPixels = width * height;
+        const cdfMin = cdf.find(value => value > 0) || 0;
+        const lookupTable = new Array(256);
+        for (let i = 0; i < 256; i++) {
+            lookupTable[i] = Math.round(((cdf[i] - cdfMin) / (totalPixels - cdfMin)) * 255);
+        }
+        
+        // 应用均衡化
+        for (let i = 0; i < data.length; i += 4) {
+            data[i] = lookupTable[data[i]];       // R
+            data[i+1] = lookupTable[data[i+1]];   // G
+            data[i+2] = lookupTable[data[i+2]];   // B
+            // Alpha通道保持不变
+        }
+        
+        // 进一步增强对比度
+        const contrast = 1.5; // 更高的对比度因子
         const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
         
         for (let i = 0; i < data.length; i += 4) {
-            // 对RGB通道应用对比度增强
-            data[i] = factor * (data[i] - 128) + 128; // R
-            data[i+1] = factor * (data[i+1] - 128) + 128; // G
-            data[i+2] = factor * (data[i+2] - 128) + 128; // B
-            // Alpha通道保持不变
+            data[i] = clamp(factor * (data[i] - 128) + 128, 0, 255);
+            data[i+1] = clamp(factor * (data[i+1] - 128) + 128, 0, 255);
+            data[i+2] = clamp(factor * (data[i+2] - 128) + 128, 0, 255);
         }
         
         ctx.putImageData(imageData, 0, 0);
     }
     
-    // 去除图片噪点
+    // 限制值在范围内
+    function clamp(value, min, max) {
+        return Math.min(Math.max(value, min), max);
+    }
+    
+    // 去除图片噪点 - 增强版
     function removeNoise(ctx, width, height) {
         const imageData = ctx.getImageData(0, 0, width, height);
         const data = imageData.data;
         const tempData = new Uint8ClampedArray(data);
         
-        // 简单的中值滤波去噪
+        // 先进行二值化，提高字符清晰度
+        binarizeImage(data, width, height);
+        
+        // 中值滤波去噪
         for (let y = 1; y < height - 1; y++) {
             for (let x = 1; x < width - 1; x++) {
                 const idx = (y * width + x) * 4;
                 
-                // 检测孤立点（与周围像素差异较大的点）
-                const isNoise = isNoisePixel(data, idx, width);
+                // 对于疑似噪点进行更严格的检测
+                const isNoise = isIsolatedNoise(data, idx, width, height, x, y);
                 
                 if (isNoise) {
-                    // 用周围像素的平均值替换噪点
-                    const avgColor = getAverageColor(data, x, y, width);
-                    tempData[idx] = avgColor.r;
-                    tempData[idx+1] = avgColor.g;
-                    tempData[idx+2] = avgColor.b;
+                    // 用周围像素的中值替换噪点
+                    const medianColor = getMedianColor(data, x, y, width);
+                    tempData[idx] = medianColor.r;
+                    tempData[idx+1] = medianColor.g;
+                    tempData[idx+2] = medianColor.b;
                 }
             }
         }
@@ -1200,60 +1236,104 @@
         ctx.putImageData(imageData, 0, 0);
     }
     
-    // 判断是否为噪点
-    function isNoisePixel(data, idx, width) {
-        // 获取当前像素的RGB值
-        const r = data[idx];
-        const g = data[idx+1];
-        const b = data[idx+2];
+    // 二值化图像
+    function binarizeImage(data, width, height) {
+        // 计算图像的平均灰度值
+        let totalGray = 0;
+        let pixelCount = 0;
         
-        // 获取上下左右像素的平均值
-        const up = getPixelAverage(data, idx - width * 4);
-        const down = getPixelAverage(data, idx + width * 4);
-        const left = getPixelAverage(data, idx - 4);
-        const right = getPixelAverage(data, idx + 4);
+        for (let i = 0; i < data.length; i += 4) {
+            const gray = (data[i] * 0.299 + data[i+1] * 0.587 + data[i+2] * 0.114);
+            totalGray += gray;
+            pixelCount++;
+        }
         
-        // 计算当前像素与周围像素的差异
-        const avgDiff = (
-            Math.abs(r - up) + Math.abs(r - down) + Math.abs(r - left) + Math.abs(r - right) +
-            Math.abs(g - up) + Math.abs(g - down) + Math.abs(g - left) + Math.abs(g - right) +
-            Math.abs(b - up) + Math.abs(b - down) + Math.abs(b - left) + Math.abs(b - right)
-        ) / 12;
+        // 计算阈值（使用平均灰度值）
+        const threshold = totalGray / pixelCount;
         
-        // 差异过大认为是噪点
-        return avgDiff > 50;
+        // 应用二值化
+        for (let i = 0; i < data.length; i += 4) {
+            const gray = (data[i] * 0.299 + data[i+1] * 0.587 + data[i+2] * 0.114);
+            const value = gray < threshold ? 0 : 255;
+            
+            data[i] = value;     // R
+            data[i+1] = value;   // G
+            data[i+2] = value;   // B
+            // Alpha通道保持不变
+        }
     }
     
-    // 获取像素RGB的平均值
-    function getPixelAverage(data, idx) {
-        if (idx < 0 || idx >= data.length) return 128;
-        return (data[idx] + data[idx+1] + data[idx+2]) / 3;
+    // 判断是否为孤立噪点（更严格的检测）
+    function isIsolatedNoise(data, idx, width, height, x, y) {
+        // 获取当前像素的灰度值
+        const currentGray = (data[idx] * 0.299 + data[idx+1] * 0.587 + data[idx+2] * 0.114);
+        
+        // 判断是否为黑色像素（二值化后）
+        const isBlack = currentGray < 128;
+        
+        // 如果是白色像素，不是噪点
+        if (!isBlack) return false;
+        
+        // 检查周围8个像素
+        let blackCount = 0;
+        let totalCount = 0;
+        
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dx === 0 && dy === 0) continue; // 跳过自身
+                
+                const nx = x + dx;
+                const ny = y + dy;
+                
+                // 检查边界
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                    const neighborIdx = (ny * width + nx) * 4;
+                    const neighborGray = (data[neighborIdx] * 0.299 + data[neighborIdx+1] * 0.587 + data[neighborIdx+2] * 0.114);
+                    
+                    if (neighborGray < 128) {
+                        blackCount++;
+                    }
+                    totalCount++;
+                }
+            }
+        }
+        
+        // 如果周围没有黑色像素或黑色像素很少，则可能是噪点
+        return blackCount === 0 || (blackCount / totalCount) < 0.25;
     }
     
-    // 获取周围像素的平均颜色
-    function getAverageColor(data, x, y, width) {
+    // 获取周围像素的中值颜色
+    function getMedianColor(data, x, y, width) {
         const neighbors = [
             {x: x-1, y: y-1}, {x: x, y: y-1}, {x: x+1, y: y-1},
             {x: x-1, y: y},                     {x: x+1, y: y},
             {x: x-1, y: y+1}, {x: x, y: y+1}, {x: x+1, y: y+1}
         ];
         
-        let totalR = 0, totalG = 0, totalB = 0, count = 0;
+        const rValues = [];
+        const gValues = [];
+        const bValues = [];
         
         for (const pos of neighbors) {
             const idx = (pos.y * width + pos.x) * 4;
             if (idx >= 0 && idx < data.length - 3) {
-                totalR += data[idx];
-                totalG += data[idx+1];
-                totalB += data[idx+2];
-                count++;
+                rValues.push(data[idx]);
+                gValues.push(data[idx+1]);
+                bValues.push(data[idx+2]);
             }
         }
         
+        // 排序并取中值
+        rValues.sort((a, b) => a - b);
+        gValues.sort((a, b) => a - b);
+        bValues.sort((a, b) => a - b);
+        
+        const medianIndex = Math.floor(rValues.length / 2);
+        
         return {
-            r: count > 0 ? Math.round(totalR / count) : 128,
-            g: count > 0 ? Math.round(totalG / count) : 128,
-            b: count > 0 ? Math.round(totalB / count) : 128
+            r: rValues.length > 0 ? rValues[medianIndex] : 255,
+            g: gValues.length > 0 ? gValues[medianIndex] : 255,
+            b: bValues.length > 0 ? bValues[medianIndex] : 255
         };
     }
     
@@ -1473,13 +1553,19 @@
         // 在线识别
         if (config.debug) console.log('[验证码] 发送到OCR服务器识别...');
         
+        // 如果是重试，尝试使用不同的图像处理策略
+        const useEnhanced = isRetry ? retryCount % 2 === 0 : true;
+        
         GM_xmlhttpRequest({
             method: 'POST',
             url: OCR_SERVER,
             headers: {
                 'Content-Type': 'application/json'
             },
-            data: JSON.stringify({ image: imageBase64 }),
+            data: JSON.stringify({ 
+                image: imageBase64,
+                enhanced: useEnhanced 
+            }),
             timeout: 10000, // 10秒超时
             anonymous: true,
             nocache: true,
@@ -1512,8 +1598,19 @@
                     } else {
                         if (config.debug) console.log('[验证码] 识别失败:', result.message || '未知错误');
                         
-                        // 如果服务器识别失败，激活离线模式
+                        // 如果服务器识别失败，尝试不同策略
                         if (!isRetry) {
+                            // 尝试刷新验证码
+                            const refreshed = tryRefreshCaptcha(inputElement);
+                            
+                            if (!refreshed) {
+                                // 如果未刷新，使用不同参数重试
+                                setTimeout(() => {
+                                    tryRecognizeCaptcha(imageBase64, inputElement, true);
+                                }, config.retryDelay);
+                            }
+                        } else {
+                            // 多次失败，激活离线模式
                             offlineOcrModels.active = true;
                             setTimeout(() => {
                                 tryRecognizeCaptcha(imageBase64, inputElement, true);
@@ -1571,6 +1668,90 @@
                 }
             }
         });
+    }
+    
+    // 尝试刷新验证码
+    function tryRefreshCaptcha(inputElement) {
+        if (config.debug) console.log('[验证码] 尝试自动刷新验证码');
+        
+        if (!currentCaptchaImg) return false;
+        
+        // 查找可能的刷新按钮
+        const refreshButtons = findRefreshButtons(currentCaptchaImg);
+        
+        if (refreshButtons.length > 0) {
+            if (config.debug) console.log('[验证码] 找到刷新按钮，点击刷新');
+            // 点击第一个刷新按钮
+            refreshButtons[0].click();
+            return true;
+        }
+        
+        // 尝试直接点击验证码图片刷新
+        if (isRefreshableImage(currentCaptchaImg)) {
+            if (config.debug) console.log('[验证码] 点击验证码图片刷新');
+            currentCaptchaImg.click();
+            return true;
+        }
+        
+        return false;
+    }
+    
+    // 查找可能的验证码刷新按钮
+    function findRefreshButtons(captchaImg) {
+        if (!captchaImg) return [];
+        
+        const results = [];
+        
+        // 查找图片附近的刷新按钮
+        const parent = captchaImg.parentElement;
+        if (!parent) return results;
+        
+        // 查找刷新图标或按钮
+        const refreshIconSelectors = [
+            'i.refresh', 'i.reload', 'i.update', 'span.refresh', 
+            'a.refresh', 'button.refresh', 'div.refresh',
+            'i[class*="refresh"]', 'i[class*="reload"]', 
+            'span[class*="refresh"]', 'a[class*="refresh"]',
+            'button[class*="refresh"]', 'div[class*="refresh"]'
+        ];
+        
+        // 在父元素中查找
+        for (const selector of refreshIconSelectors) {
+            const elements = parent.querySelectorAll(selector);
+            for (const el of elements) {
+                if (isVisible(el)) {
+                    results.push(el);
+                }
+            }
+        }
+        
+        // 查找包含刷新相关文本的元素
+        const allElements = parent.querySelectorAll('a, button, span, div');
+        for (const el of allElements) {
+            if (!isVisible(el)) continue;
+            
+            const text = (el.textContent || '').toLowerCase();
+            const title = (el.getAttribute('title') || '').toLowerCase();
+            
+            if (text.includes('刷新') || text.includes('换一张') || 
+                text.includes('refresh') || text.includes('reload') ||
+                title.includes('刷新') || title.includes('换一张') || 
+                title.includes('refresh') || title.includes('reload')) {
+                
+                results.push(el);
+            }
+        }
+        
+        return results;
+    }
+    
+    // 判断图片是否可点击刷新
+    function isRefreshableImage(img) {
+        // 检查图片或父元素是否有点击事件
+        return img.onclick || 
+               img.parentElement.onclick || 
+               img.style.cursor === 'pointer' || 
+               img.parentElement.style.cursor === 'pointer';
     }
     
     // 填写验证码输入框

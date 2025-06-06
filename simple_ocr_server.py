@@ -50,8 +50,10 @@ slide_cache: Dict[str, Dict[str, Any]] = {}
 MAX_CONCURRENT_TASKS = 10
 task_semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
 
-# 初始化OCR识别器
-ocr = ddddocr.DdddOcr(show_ad=False)
+# 初始化多个OCR识别器，针对不同类型的验证码
+ocr = ddddocr.DdddOcr(show_ad=False, beta=True)  # 使用beta版本，准确率更高
+ocr_fast = ddddocr.DdddOcr(show_ad=False)  # 标准版本，速度较快
+ocr_difficult = ddddocr.DdddOcr(show_ad=False, beta=True, old=False)  # 针对难识别验证码
 slide_detector = ddddocr.DdddOcr(det=False, ocr=False)
 
 @app.get("/")
@@ -126,13 +128,99 @@ def calculate_image_hash(image_data: bytes) -> str:
     """计算图片数据的哈希值，用于缓存键"""
     return hashlib.md5(image_data).hexdigest()
 
-async def process_ocr_task(image_data: bytes) -> str:
+async def process_ocr_task(image_data: bytes, use_enhanced: bool = False) -> str:
     """处理OCR任务，使用信号量控制并发"""
     async with task_semaphore:
+        # 先增强图像
+        if use_enhanced:
+            image_data = await enhance_image(image_data)
+        
         # 使用线程池执行耗时操作
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, ocr.classification, image_data)
+        
+        # 多模型识别，取最有可能的结果
+        result1 = await loop.run_in_executor(None, ocr.classification, image_data)
+        result2 = await loop.run_in_executor(None, ocr_difficult.classification, image_data)
+        
+        # 检查结果长度和复杂度，选择最可能的结果
+        result = choose_best_result(result1, result2)
         return result
+
+def choose_best_result(result1: str, result2: str) -> str:
+    """从多个识别结果中选择最可能正确的结果"""
+    # 如果结果相同，直接返回
+    if result1 == result2:
+        return result1
+    
+    # 检查结果长度，一般验证码长度为4-6个字符
+    if 4 <= len(result1) <= 6 and not (4 <= len(result2) <= 6):
+        return result1
+    if not (4 <= len(result1) <= 6) and 4 <= len(result2) <= 6:
+        return result2
+    
+    # 检查结果中是否包含特殊字符
+    if has_special_chars(result1) and not has_special_chars(result2):
+        return result2
+    if not has_special_chars(result1) and has_special_chars(result2):
+        return result1
+    
+    # 优先返回数字字母混合的结果
+    if contains_letters_and_digits(result1) and not contains_letters_and_digits(result2):
+        return result1
+    if not contains_letters_and_digits(result1) and contains_letters_and_digits(result2):
+        return result2
+    
+    # 默认返回第一个结果
+    return result1
+
+def has_special_chars(text: str) -> bool:
+    """检查文本是否包含特殊字符"""
+    import re
+    return bool(re.search(r'[^a-zA-Z0-9]', text))
+
+def contains_letters_and_digits(text: str) -> bool:
+    """检查文本是否同时包含字母和数字"""
+    has_letter = any(c.isalpha() for c in text)
+    has_digit = any(c.isdigit() for c in text)
+    return has_letter and has_digit
+
+async def enhance_image(image_data: bytes) -> bytes:
+    """增强图像质量，提高识别率"""
+    try:
+        # 解码图像
+        nparr = np.frombuffer(image_data, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if img is None:
+            logger.warning("图像解码失败，返回原始数据")
+            return image_data
+        
+        # 转换为灰度图
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        # 自适应二值化
+        binary = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY, 11, 2
+        )
+        
+        # 降噪
+        denoised = cv2.fastNlMeansDenoising(binary, None, 10, 7, 21)
+        
+        # 增强对比度
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        enhanced = clahe.apply(denoised)
+        
+        # 锐化
+        kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+        sharpened = cv2.filter2D(enhanced, -1, kernel)
+        
+        # 编码回bytes
+        _, buffer = cv2.imencode('.png', sharpened)
+        return buffer.tobytes()
+    except Exception as e:
+        logger.error(f"图像增强处理失败: {str(e)}")
+        return image_data
 
 async def process_slide_task(bg_data: bytes, slide_data: bytes) -> Dict[str, Any]:
     """处理滑块识别任务，使用信号量控制并发"""
@@ -147,8 +235,8 @@ async def recognize_captcha(request: Request, background_tasks: BackgroundTasks)
     """
     识别图形验证码
     
-    请求格式: {"image": "base64编码的图片数据"}
-    返回格式: {"code": 0, "data": "识别结果"}
+    请求格式: {"image": "base64编码的图片数据", "enhanced": true/false}
+    返回格式: {"code": 0, "data": "识别结果", "from_cache": true|false}
     """
     try:
         # 获取请求数据
@@ -156,6 +244,9 @@ async def recognize_captcha(request: Request, background_tasks: BackgroundTasks)
         
         if "image" not in data:
             return {"code": 1, "message": "缺少image参数"}
+        
+        # 是否使用增强模式
+        use_enhanced = data.get("enhanced", True)
         
         # 解码base64图片
         image_data = base64.b64decode(data["image"])
@@ -176,7 +267,7 @@ async def recognize_captcha(request: Request, background_tasks: BackgroundTasks)
         
         # 识别验证码
         start_time = time.time()
-        result = await process_ocr_task(image_data)
+        result = await process_ocr_task(image_data, use_enhanced)
         elapsed = time.time() - start_time
         
         # 存入缓存
@@ -203,7 +294,7 @@ async def recognize_slider(request: Request, background_tasks: BackgroundTasks):
     
     请求格式: {"bg_image": "背景图base64", "slide_image": "滑块图base64"} 
              或 {"full_image": "完整截图base64"}
-    返回格式: {"code": 0, "data": {"x": 横向距离, "y": 纵向距离}}
+    返回格式: {"code": 0, "data": {"x": 横向距离, "y": 纵向距离}, "from_cache": true|false}
     """
     try:
         data = await request.json()
