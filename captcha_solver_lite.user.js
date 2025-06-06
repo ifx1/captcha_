@@ -1,19 +1,12 @@
 // ==UserScript==
 // @name         极简验证码识别工具
 // @namespace    http://tampermonkey.net/
-// @version      1.2
-// @description  极简版验证码识别工具，支持图形验证码和滑块验证码，带UI配置界面
+// @version      1.6
+// @description  极简版验证码识别工具，支持图形验证码和滑块验证码
 // @author       laozig
 // @license      MIT
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
-// @grant        GM_setValue
-// @grant        GM_getValue
-// @grant        GM_deleteValue
-// @grant        GM_listValues
-// @grant        GM_registerMenuCommand
-// @grant        GM_addStyle
-// @grant        GM_notification
 // @connect      localhost
 // @connect      *
 // @connect      captcha.tangyun.lat
@@ -25,488 +18,103 @@
 (function() {
     'use strict';
     
-    // OCR服务器地址 - 可通过UI配置
-    const DEFAULT_OCR_SERVER = 'http://127.0.0.1:9898/ocr';
-    const DEFAULT_SLIDE_SERVER = 'http://127.0.0.1:9898/slide';
-    
-    // 从存储中获取服务器地址
-    const OCR_SERVER = GM_getValue('ocr_server', DEFAULT_OCR_SERVER);
-    const SLIDE_SERVER = GM_getValue('slide_server', DEFAULT_SLIDE_SERVER);
+    // OCR服务器地址 - 已修改为您的服务器IP地址
+    const OCR_SERVER = 'http://captcha.tangyun.lat:9898/ocr';
+    const SLIDE_SERVER = 'http://captcha.tangyun.lat:9898/slide';
     
     // 配置
-    const defaultConfig = {
+    const config = {
         autoMode: true,  // 自动识别验证码
-        checkInterval: 2000,  // 自动检查间隔(毫秒)，减少频率以降低CPU使用率
-        debug: true,  // 打开调试信息，方便排查问题
-        consoleLogLevel: 'info',  // 控制台日志级别: debug, info, warn, error, none
+        checkInterval: 1500,  // 自动检查间隔(毫秒)
+        debug: false,  // 是否显示调试信息，默认关闭减少输出
         delay: 500,  // 点击验证码后的识别延迟(毫秒)
         loginDelay: 800,  // 点击登录按钮后的识别延迟(毫秒)
         popupCheckDelay: 1000,  // 弹窗检查延迟(毫秒)
-        popupMaxChecks: 5,  // 弹窗出现后最大检查次数
-        searchDepth: 5,  // 搜索深度级别，越大搜索越深
-        maxSearchDistance: 500,  // 查找输入框的最大距离
+        popupMaxChecks: 3,  // 弹窗出现后最大检查次数，减少为3次
+        searchDepth: 4,  // 搜索深度级别，减少一级
+        maxSearchDistance: 400,  // 查找输入框的最大距离，减少搜索范围
         sliderEnabled: true,  // 是否启用滑块验证码支持
         sliderDelay: 500,  // 滑块验证码延迟(毫秒)
         sliderSpeed: 20,  // 滑块拖动速度，越大越慢
         sliderAccuracy: 5,  // 滑块拖动精度，像素误差范围
         initialSliderCheckDelay: 2000,  // 初始滑块检查延迟(毫秒)
-        forceSliderCheck: false,  // 关闭强制定期检查滑块验证码，减少资源占用
-        useSlideAPI: true,  // 是否使用服务器API进行滑块分析
-        throttleInterval: 100,  // 节流间隔(毫秒)
-        mutationObserverConfig: {  // MutationObserver配置
-            childList: true,  // 监听子节点变化
-            attributes: true,  // 监听属性变化
-            subtree: true,  // 监听整个子树
-            attributeFilter: ['src', 'style', 'class', 'display', 'visibility']  // 只监听这些属性
-        },
-        debounceDelay: 300,  // 防抖延迟(毫秒)
-        cacheSize: 50,  // 缓存大小
-        preloadImages: false,  // 是否预加载图片
-        persistentCache: true,  // 是否使用持久化缓存
-        cacheTTL: 7 * 24 * 60 * 60 * 1000,  // 缓存有效期(毫秒)，默认7天
-        autoCleanupInterval: 24 * 60 * 60 * 1000,  // 自动清理间隔(毫秒)，默认1天
-        maxPersistentCacheSize: 500,  // 持久化缓存最大条目数
-        showNotifications: false,  // 不显示通知
-        showIcon: false,  // 不显示状态图标
-        iconPosition: 'top-right',  // 图标位置: 'top-right', 'top-left', 'bottom-right', 'bottom-left'
-        darkMode: false,  // 暗黑模式
-        captchaTypes: {  // 支持的验证码类型
-            normal: true,  // 普通图形验证码
-            slider: true,  // 滑块验证码
-            clickCaptcha: true,  // 点选验证码
-            rotationCaptcha: false,  // 旋转验证码(实验性)
-            jigsaw: true  // 拼图验证码
-        },
-        autoSubmit: false,  // 自动提交表单(默认关闭)
-        enableKeyboardShortcuts: false,  // 不启用键盘快捷键
-        statistics: {  // 统计信息
-            enabled: false,  // 关闭统计
-            totalCaptchas: 0,  // 总处理验证码数
-            successCount: 0,  // 成功识别数
-            failCount: 0,  // 失败数
-            avgTime: 0,  // 平均识别时间(ms)
-            lastReset: Date.now()  // 上次重置时间
-        }
+        forceSliderCheck: false,  // 关闭强制定期检查滑块验证码，减少重复识别
+        useSlideAPI: true  // 是否使用服务器API进行滑块分析
     };
     
-    // 合并默认配置和保存的配置
-    let config = Object.assign({}, defaultConfig, GM_getValue('config', {}));
-    
-    // 保存配置
-    function saveConfig() {
-        GM_setValue('config', config);
-    }
-    
-    // 初次使用时保存默认配置
-    if (!GM_getValue('config')) {
-        saveConfig();
-    }
-    
     // 存储识别过的验证码和当前处理的验证码
-    const processedCaptchas = new Set();
+    let processedCaptchas = new Set();
     let currentCaptchaImg = null;
     let currentCaptchaInput = null;
     let popupCheckCount = 0;
     let popupCheckTimer = null;
-    let lastCheckTime = 0;  // 上次检查时间戳
-    let debounceTimer = null;  // 防抖定时器
-    let lastCleanupTime = GM_getValue('lastCleanupTime', 0);  // 上次清理时间
-    let isEnabled = GM_getValue('isEnabled', true);  // 是否启用脚本
-    let uiInitialized = false;  // UI是否已初始化
-    
-    // 统计数据
-    const stats = Object.assign({}, defaultConfig.statistics, GM_getValue('statistics', {}));
-    
-    // 保存统计数据
-    function saveStats() {
-        GM_setValue('statistics', stats);
-    }
-    
-    // 更新统计数据
-    function updateStats(success, time) {
-        if (!config.statistics.enabled) return;
-        
-        stats.totalCaptchas++;
-        if (success) {
-            stats.successCount++;
-        } else {
-            stats.failCount++;
-        }
-        
-        // 更新平均时间
-        const totalTimes = stats.avgTime * (stats.successCount + stats.failCount - 1);
-        stats.avgTime = (totalTimes + time) / (stats.successCount + stats.failCount);
-        
-        saveStats();
-    }
-    
-    // 重置统计
-    function resetStats() {
-        stats.totalCaptchas = 0;
-        stats.successCount = 0;
-        stats.failCount = 0;
-        stats.avgTime = 0;
-        stats.lastReset = Date.now();
-        saveStats();
-    }
-    
-    // 日志系统
-    const logger = {
-        levels: {
-            debug: 0,
-            info: 1,
-            warn: 2,
-            error: 3,
-            none: 99
-        },
-        
-        getCurrentLevel() {
-            return this.levels[config.consoleLogLevel] || this.levels.error;
-        },
-        
-        debug(...args) {
-            if (this.getCurrentLevel() <= this.levels.debug) {
-                console.log('[验证码]', ...args);
-            }
-        },
-        
-        info(...args) {
-            if (this.getCurrentLevel() <= this.levels.info) {
-                console.info('[验证码]', ...args);
-            }
-        },
-        
-        warn(...args) {
-            if (this.getCurrentLevel() <= this.levels.warn) {
-                console.warn('[验证码]', ...args);
-            }
-        },
-        
-        error(...args) {
-            if (this.getCurrentLevel() <= this.levels.error) {
-                console.error('[验证码]', ...args);
-            }
-        },
-        
-        // 显示通知
-        notify(title, message, type = 'info') {
-            if (!config.showNotifications) return;
-            
-            GM_notification({
-                title: `验证码识别 - ${title}`,
-                text: message,
-                timeout: 3000,
-                onclick: () => { /* 可选的点击事件 */ }
-            });
-        }
-    };
-    
-    // 缓存系统
-    const captchaCache = {
-        _memoryCache: new Map(),
-        
-        // 获取缓存
-        get(key) {
-            console.log('[验证码调试] 尝试获取缓存, key:', key.slice(0, 20) + '...');
-            
-            // 检查内存缓存
-            if (this._memoryCache.has(key)) {
-                console.log('[验证码调试] 内存缓存命中');
-                return this._memoryCache.get(key);
-            }
-            
-            // 检查持久化缓存
-            if (config.persistentCache) {
-                try {
-                    const persistentKey = 'captcha_cache_' + hashString(key);
-                    const cachedItem = GM_getValue(persistentKey);
-                    
-                    if (cachedItem) {
-                        const {value, timestamp} = cachedItem;
-                        
-                        // 检查缓存是否过期
-                        if (Date.now() - timestamp < config.cacheTTL) {
-                            console.log('[验证码调试] 持久化缓存命中');
-                            
-                            // 同时存入内存缓存
-                            this._memoryCache.set(key, value);
-                            
-                            return value;
-                        } else {
-                            // 缓存过期，删除
-                            GM_deleteValue(persistentKey);
-                        }
-                    }
-                } catch (e) {
-                    console.error('[验证码调试] 获取持久化缓存出错:', e);
-                }
-            }
-            
-            console.log('[验证码调试] 缓存未命中');
-            return null;
-        },
-        
-        // 设置缓存
-        set(key, value) {
-            console.log('[验证码调试] 设置缓存, key:', key.slice(0, 20) + '...');
-            
-            try {
-                // 存入内存缓存
-                this._memoryCache.set(key, value);
-                
-                // 控制内存缓存大小
-                if (this._memoryCache.size > config.cacheSize) {
-                    // 删除最早加入的条目
-                    const keysIterator = this._memoryCache.keys();
-                    this._memoryCache.delete(keysIterator.next().value);
-                }
-                
-                // 存入持久化缓存
-                if (config.persistentCache) {
-                    try {
-                        const persistentKey = 'captcha_cache_' + hashString(key);
-                        GM_setValue(persistentKey, {
-                            value: value,
-                            timestamp: Date.now()
-                        });
-                    } catch (e) {
-                        console.error('[验证码调试] 设置持久化缓存出错:', e);
-                    }
-                }
-            } catch (e) {
-                console.error('[验证码调试] 设置缓存出错:', e);
-            }
-        },
-        
-        // 清理过期缓存
-        cleanup() {
-            console.log('[验证码调试] 清理过期缓存');
-            
-            try {
-                // 清理持久化缓存
-                if (config.persistentCache) {
-                    const allKeys = GM_listValues();
-                    const cacheKeys = allKeys.filter(key => key.startsWith('captcha_cache_'));
-                    
-                    console.log('[验证码调试] 找到', cacheKeys.length, '个缓存项');
-                    
-                    let deletedCount = 0;
-                    const now = Date.now();
-                    
-                    // 删除过期缓存
-                    for (const key of cacheKeys) {
-                        try {
-                            const cachedItem = GM_getValue(key);
-                            if (cachedItem && now - cachedItem.timestamp > config.cacheTTL) {
-                                GM_deleteValue(key);
-                                deletedCount++;
-                            }
-                        } catch (e) {
-                            // 忽略单个缓存项的错误
-                        }
-                    }
-                    
-                    console.log('[验证码调试] 已清理', deletedCount, '个过期缓存项');
-                    
-                    // 限制持久化缓存大小
-                    if (cacheKeys.length - deletedCount > config.maxPersistentCacheSize) {
-                        // 按时间排序
-                        const remainingKeys = cacheKeys.filter(key => {
-                            try {
-                                return GM_getValue(key) !== undefined;
-                            } catch (e) {
-                                return false;
-                            }
-                        }).sort((a, b) => {
-                            try {
-                                const itemA = GM_getValue(a);
-                                const itemB = GM_getValue(b);
-                                return (itemA?.timestamp || 0) - (itemB?.timestamp || 0);
-                            } catch (e) {
-                                return 0;
-                            }
-                        });
-                        
-                        // 删除最旧的缓存项
-                        const deleteCount = cacheKeys.length - config.maxPersistentCacheSize;
-                        if (deleteCount > 0) {
-                            for (let i = 0; i < deleteCount && i < remainingKeys.length; i++) {
-                                try {
-                                    GM_deleteValue(remainingKeys[i]);
-                                } catch (e) {
-                                    // 忽略单个删除错误
-                                }
-                            }
-                            console.log('[验证码调试] 已清理', deleteCount, '个旧缓存项以控制缓存大小');
-                        }
-                    }
-                    
-                    // 记录最后清理时间
-                    GM_setValue('lastCleanupTime', now);
-                    lastCleanupTime = now;
-                }
-                
-                // 清理内存缓存
-                if (this._memoryCache.size > config.cacheSize) {
-                    // 只保留最新的条目
-                    const entries = Array.from(this._memoryCache.entries());
-                    const toKeep = entries.slice(-config.cacheSize);
-                    
-                    this._memoryCache.clear();
-                    for (const [k, v] of toKeep) {
-                        this._memoryCache.set(k, v);
-                    }
-                    
-                    console.log('[验证码调试] 已清理内存缓存至', this._memoryCache.size, '个条目');
-                }
-            } catch (e) {
-                console.error('[验证码调试] 清理缓存过程出错:', e);
-            }
-        }
-    };
-    
-    // 工具函数 - 节流函数，控制函数调用频率
-    const throttle = (func, delay) => {
-        let lastCall = 0;
-        return function(...args) {
-            const now = Date.now();
-            if (now - lastCall < delay) return;
-            lastCall = now;
-            return func.apply(this, args);
-        };
-    };
-    
-    // 工具函数 - 防抖函数，延迟执行函数
-    const debounce = (func, delay) => {
-        return function(...args) {
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => {
-                func.apply(this, args);
-            }, delay);
-        };
-    };
-    
-    // 对字符串进行简单哈希处理，用于缓存键生成
-    function hashString(str) {
-        let hash = 0;
-        for (let i = 0; i < str.length; i++) {
-            const char = str.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash = hash & hash; // 转换为32位整数
-        }
-        return hash.toString(16);
-    }
-    
-    // 找到与验证码相关联的提交按钮
-    function findSubmitButton(captchaElement) {
-        // 查找最近的表单
-        let form = captchaElement.closest('form');
-        if (form) {
-            // 在表单中查找提交按钮
-            const button = form.querySelector('button[type="submit"], input[type="submit"], button:not([type]), .submit-btn, .login-btn, [class*="submit"], [class*="login"]');
-            if (button) return button;
-        }
-        
-        // 如果没有在表单中找到，向上查找到公共容器，然后查找按钮
-        let container = captchaElement.parentElement;
-        for (let i = 0; i < 5 && container; i++) {
-            const button = container.querySelector('button, input[type="submit"], .submit-btn, .login-btn, [class*="submit"], [class*="login"]');
-            if (button) return button;
-            container = container.parentElement;
-        }
-        
-        return null;
-    }
+    let lastProcessTime = 0; // 添加最后处理时间变量，用于限制处理频率
+    const MIN_PROCESS_INTERVAL = 2000; // 最小处理间隔（毫秒）
     
     // 初始化
     function init() {
-        console.log('=== 验证码识别助手(精简版) v1.2 已启动 ===');
-        console.log('[验证码调试] 调试模式已开启，所有日志将输出到控制台');
-        console.log('[验证码调试] OCR服务器地址:', OCR_SERVER);
-        
-        // 立即测试服务器连接
-        testServerConnection();
-        
-        // 清理过期缓存
-        const lastCleanupTimeKey = 'lastCleanupTime';
-        const now = Date.now();
-        const lastCleanupTime = GM_getValue(lastCleanupTimeKey, 0);
-        
-        if (now - lastCleanupTime > config.autoCleanupInterval) {
-            console.log('[验证码调试] 开始定期清理缓存...');
-            captchaCache.cleanup();
-        }
-        
-        // 初始化事件监听器
-        document.addEventListener('DOMContentLoaded', onDOMReady);
-        
-        // 如果文档已经加载完成，直接调用
-        if (document.readyState === 'complete' || document.readyState === 'interactive') {
-            console.log('[验证码调试] 文档已加载，立即启动');
+        // 等待页面加载完成
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', onDOMReady);
+        } else {
             onDOMReady();
         }
         
-        // 在文档可交互时启动定时检查
-        window.addEventListener('load', function() {
-            console.log('[验证码调试] 页面加载完成，开始验证码检查');
+        // 显示服务器连接信息
+        if (config.debug) {
+            console.log('[验证码] 服务器地址: ' + OCR_SERVER);
+            console.log('[验证码] 调试模式已开启');
             
-            // 再次测试服务器连接，确保连接正常
-            setTimeout(() => testServerConnection(), 1000);
-            
-            // 强制立即检查一次
-            setTimeout(() => {
-                console.log('[验证码调试] 初始检查验证码...');
-                checkForCaptcha(true);
-            }, 1500);
-            
-            if (config.autoMode) {
-                // 设置定时检查
-                console.log('[验证码调试] 设置定时检查，间隔:', config.checkInterval, 'ms');
-                
-                setInterval(() => {
-                    checkForCaptcha();
-                }, config.checkInterval);
-            }
-            
-            // 注册其他验证码类型的检测
-            if (config.captchaTypes.slider && config.sliderEnabled) {
-                // 初始滑块检查
-                setTimeout(() => {
-                    console.log('[验证码调试] 初始检查滑块验证码...');
-                    checkForSliderCaptcha(true);
-                }, config.initialSliderCheckDelay);
-                
-                // 定时检查滑块验证码
-                if (config.forceSliderCheck) {
-                    console.log('[验证码调试] 设置滑块验证码定时检查');
-                    setInterval(() => {
-                        checkForSliderCaptcha();
-                    }, 5000);  // 降低频率，减少资源占用
+            // 测试服务器连接
+            testServerConnection();
+        }
+    }
+    
+    // 测试服务器连接
+    function testServerConnection() {
+        if (!config.debug) return; // 如果不是调试模式，不进行连接测试
+        
+        console.log('[验证码] 正在测试服务器连接...');
+        
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: OCR_SERVER.replace('/ocr', '/'),
+            timeout: 5000,
+            onload: function(response) {
+                try {
+                    const result = JSON.parse(response.responseText);
+                    console.log('[验证码] 服务器连接成功:', result);
+                } catch (e) {
+                    console.log('[验证码] 服务器响应解析错误:', e);
                 }
+            },
+            onerror: function(error) {
+                console.log('[验证码] 服务器连接失败');
+            },
+            ontimeout: function() {
+                console.log('[验证码] 服务器连接超时');
             }
-            
-            if (config.captchaTypes.clickCaptcha) {
-                // 初始点选验证码检查
-                setTimeout(() => {
-                    console.log('[验证码调试] 初始检查点选验证码...');
-                    checkForClickCaptcha(true);
-                }, 2000);
-            }
-            
-            console.log('[验证码调试] 开始观察页面变化');
-            
-            // 观察页面变化
-            observePageChanges();
-            
-            // 监听弹窗
-            observePopups();
-            
-            // 监听登录按钮的点击
-            listenForLoginButtonClicks();
-            
-            // 监听验证码图片的点击，有些网站会在点击验证码后刷新
-            listenForCaptchaClicks();
         });
+    }
+    
+    // 简化的日志输出函数
+    function log(message, level = 'info', isLowPriority = false) {
+        if (!config.debug && level !== 'error') return;
+        
+        const prefix = '[验证码] ';
+        switch(level) {
+            case 'error':
+                console.error(prefix + message);
+                break;
+            case 'warn':
+                console.warn(prefix + message);
+                break;
+            case 'success':
+                console.log('%c' + prefix + message, 'color: green; font-weight: bold;');
+                break;
+            default:
+                console.log(prefix + message);
+        }
     }
     
     // 页面加载完成后执行
@@ -523,33 +131,20 @@
             }, config.initialSliderCheckDelay);
         }
         
-        // 使用节流函数包装检查函数
-        const throttledCheckForCaptcha = throttle(checkForCaptcha, config.throttleInterval);
-        const throttledCheckForSliderCaptcha = throttle(checkForSliderCaptcha, config.throttleInterval);
-        
-        // 开始定期检查，使用较低频率
+        // 开始定期检查
         setInterval(() => {
-            const now = Date.now();
-            // 确保至少间隔config.checkInterval毫秒
-            if (now - lastCheckTime >= config.checkInterval) {
-                lastCheckTime = now;
-                throttledCheckForCaptcha();
-            }
+            checkForCaptcha();
         }, config.checkInterval);
         
-        // 定期检查滑块验证码，使用较低频率
+        // 定期检查滑块验证码
         if (config.sliderEnabled) {
             setInterval(() => {
-                const now = Date.now();
-                // 频率更低的滑块检查
-                if (now - lastCheckTime >= config.checkInterval * 2) {
-                    if (config.forceSliderCheck) {
-                        throttledCheckForSliderCaptcha(true);
-                    } else {
-                        throttledCheckForSliderCaptcha();
-                    }
+                if (config.forceSliderCheck) {
+                    checkForSliderCaptcha(true);
+                } else {
+                    checkForSliderCaptcha();
                 }
-            }, config.checkInterval * 3);  // 更低的检查频率
+            }, config.checkInterval * 2);
         }
         
         // 监听页面变化
@@ -565,74 +160,50 @@
         observePopups();
     }
     
-    // 测试服务器连接
-    function testServerConnection() {
-        console.log('[验证码调试] 测试服务器连接...');
-        console.log('[验证码调试] 测试地址:', OCR_SERVER);
-        
-        GM_xmlhttpRequest({
-            method: 'GET',
-            url: OCR_SERVER.replace('/ocr', '/'),
-            timeout: 5000,
-            onload: function(response) {
-                try {
-                    console.log('[验证码调试] 服务器响应状态码:', response.status);
-                    if (response.status !== 200) {
-                        console.error('[验证码调试] 服务器返回错误状态码:', response.status);
-                        console.error('[验证码调试] 响应内容:', response.responseText);
-                        return;
-                    }
-                    
-                    const result = JSON.parse(response.responseText);
-                    console.log('[验证码调试] 服务器连接成功:', result);
-                } catch (e) {
-                    console.error('[验证码调试] 服务器响应解析错误:', e);
-                    console.error('[验证码调试] 原始响应:', response.responseText);
-                }
-            },
-            onerror: function(error) {
-                console.error('[验证码调试] 服务器连接失败:', error);
-                console.error('[验证码调试] 请检查服务器地址是否正确，并确认服务器是否已启动');
-                console.error('[验证码调试] 本地服务器需要启动 simple_ocr_server.py');
-            },
-            ontimeout: function() {
-                console.error('[验证码调试] 服务器连接超时');
-                console.error('[验证码调试] 请检查服务器地址是否正确，并确认服务器是否已启动');
-                console.error('[验证码调试] 本地服务器需要启动 simple_ocr_server.py');
-            }
-        });
-    }
-    
     // 监听页面变化，检测新加载的验证码
     function observePageChanges() {
+        // 创建防抖函数，避免短时间内多次执行
+        let debounceTimer = null;
+        const DEBOUNCE_DELAY = 300; // 300毫秒防抖延迟
+        
+        const debouncedCheck = (isPopupCheck = false) => {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                checkForCaptcha(false, isPopupCheck);
+                if (config.sliderEnabled) {
+                    checkForSliderCaptcha(false);
+                }
+            }, DEBOUNCE_DELAY);
+        };
+        
         // 创建MutationObserver实例
-        const observer = new MutationObserver(
-            // 使用防抖函数，减少频繁调用
-            debounce((mutations) => {
+        const observer = new MutationObserver((mutations) => {
             let shouldCheck = false;
             let popupDetected = false;
             let sliderDetected = false;
             
-            for (const mutation of mutations) {
+            // 限制每次只处理一定数量的变更，减少性能影响
+            const MAX_MUTATIONS = 20;
+            const relevantMutations = mutations.slice(0, MAX_MUTATIONS);
+            
+            for (const mutation of relevantMutations) {
                 // 检查新添加的节点
                 if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
                     for (const node of mutation.addedNodes) {
                         // 检查是否添加了图片
                         if (node.tagName === 'IMG' || 
-                            (node.nodeType === 1 && node.querySelector('img'))) {
+                            (node.nodeType === 1 && node.querySelector && node.querySelector('img'))) {
                             shouldCheck = true;
                         }
                         
                         // 检查是否添加了弹窗
                         if (node.nodeType === 1 && isPossiblePopup(node)) {
                             popupDetected = true;
-                                if (config.debug) logger.info('[验证码] 检测到可能的弹窗:', node);
                         }
                         
                         // 检查是否添加了滑块验证码
                         if (node.nodeType === 1 && config.sliderEnabled && isPossibleSlider(node)) {
                             sliderDetected = true;
-                                if (config.debug) logger.info('[验证码] 检测到可能的滑块验证码:', node);
                         }
                     }
                 }
@@ -647,7 +218,6 @@
                             const styles = window.getComputedStyle(mutation.target);
                             if (styles.display !== 'none' && styles.visibility !== 'hidden') {
                                 popupDetected = true;
-                                    if (config.debug) logger.info('[验证码] 检测到弹窗显示:', mutation.target);
                             }
                         }
                         
@@ -656,42 +226,30 @@
                             const styles = window.getComputedStyle(mutation.target);
                             if (styles.display !== 'none' && styles.visibility !== 'hidden') {
                                 sliderDetected = true;
-                                    if (config.debug) logger.info('[验证码] 检测到滑块验证码显示:', mutation.target);
                             }
                         }
-                        
-                        // 元素显示状态变化可能意味着验证码出现
-                        shouldCheck = true;
                     }
                 }
             }
-                
-                // 避免频繁检查
-                const now = Date.now();
-                if (now - lastCheckTime < config.throttleInterval) {
-                    return;
-                }
-                lastCheckTime = now;
             
-            if (shouldCheck) {
-                    // 使用节流函数检查验证码
-                    setTimeout(() => checkForCaptcha(), config.delay);
-            }
-            
+            // 使用防抖函数检查
             if (popupDetected) {
-                    // 开始弹窗检查
-                startPopupChecks();
+                debouncedCheck(true); // 弹窗检查
+            } else if (shouldCheck || sliderDetected) {
+                debouncedCheck(false); // 常规检查
             }
-            
-            if (sliderDetected && config.sliderEnabled) {
-                    // 检查滑块验证码
-                    setTimeout(() => checkForSliderCaptcha(), config.sliderDelay);
-                }
-            }, config.debounceDelay)
-        );
+        });
         
-        // 开始监听
-        observer.observe(document.documentElement, config.mutationObserverConfig);
+        // 设置观察器配置
+        const config = {
+            childList: true,
+            subtree: true, 
+            attributes: true,
+            attributeFilter: ['src', 'style', 'class', 'display', 'visibility']
+        };
+        
+        // 开始观察文档
+        observer.observe(document, config);
     }
     
     // 检查元素是否可能是弹窗
@@ -763,7 +321,7 @@
             const element = event.target;
             
             if (isLoginButton(element)) {
-                if (config.debug) logger.info('[验证码] 检测到点击登录按钮，稍后将检查验证码');
+                if (config.debug) console.log('[验证码] 检测到点击登录按钮，稍后将检查验证码');
                 
                 // 延迟检查验证码，给验证码加载的时间
                 setTimeout(() => {
@@ -855,7 +413,7 @@
                 
                 // 判断是否可能是验证码图片
                 if (isCaptchaImage(img)) {
-                    if (config.debug) logger.info('[验证码] 检测到用户点击了验证码图片，等待新验证码加载...');
+                    if (config.debug) console.log('[验证码] 检测到用户点击了验证码图片，等待新验证码加载...');
                     
                     // 延迟后识别新验证码
                     setTimeout(() => {
@@ -893,45 +451,13 @@
         const id = (img.id || '').toLowerCase();
         
         // 检查所有属性是否包含验证码相关关键词
-        const captchaKeywords = [
-            'captcha', 'verify', 'vcode', 'yzm', 'yanzheng', 'code', 'check', 
-            'authcode', 'seccode', 'validate', 'verification', '验证码', '验证', '校验码',
-            'security', 'rand', 'refresh', '刷新码', 'verifycode'
-        ];
-        
-        // 检查父元素和祖先元素的类名和ID是否包含关键词
-        let parent = img.parentElement;
-        let parentChecked = false;
-        let depth = 0; // 设置最大深度为3
-        while (parent && depth < 3 && !parentChecked) {
-            const parentClass = (parent.className || '').toLowerCase();
-            const parentId = (parent.id || '').toLowerCase();
-            
-            for (const keyword of captchaKeywords) {
-                if (parentClass.includes(keyword) || parentId.includes(keyword)) {
-                    parentChecked = true;
-                    break;
-                }
-            }
-            parent = parent.parentElement;
-            depth++;
-        }
+        const captchaKeywords = ['captcha', 'verify', 'vcode', 'yzm', 'yanzheng', 'code', 'check', 
+                                'authcode', 'seccode', 'validate', 'verification', '验证码', '验证', '校验码'];
         
         // 检查图片各种属性
         for (const keyword of captchaKeywords) {
             if (src.includes(keyword) || alt.includes(keyword) || title.includes(keyword) || 
-                className.includes(keyword) || id.includes(keyword) || parentChecked) {
-                
-                // 额外排除已知的非验证码图片
-                if (
-                    src.includes('logo') || 
-                    src.includes('icon') || 
-                    src.includes('avatar')
-                ) {
-                    return false;
-                }
-                
-                if (config.debug) logger.info('[验证码] 通过关键词匹配识别到验证码图片:', src);
+                className.includes(keyword) || id.includes(keyword)) {
                 return true;
             }
         }
@@ -939,39 +465,16 @@
         // 基于图片尺寸判断
         if (img.complete && img.naturalWidth > 0) {
             // 验证码图片通常较小，但不会太小
-            if (img.naturalWidth >= 30 && img.naturalWidth <= 200 &&
-                img.naturalHeight >= 18 && img.naturalHeight <= 100) {
+            if (img.naturalWidth >= 20 && img.naturalWidth <= 200 &&
+                img.naturalHeight >= 20 && img.naturalHeight <= 100) {
                 
                 // 排除明显不是验证码的图片
+                if (img.naturalWidth === img.naturalHeight) return false; // 正方形可能是图标
                 if (src.includes('logo') || src.includes('icon')) return false;
                 
                 // 验证码宽高比通常在1:1到5:1之间
                 const ratio = img.naturalWidth / img.naturalHeight;
-                if (ratio >= 0.8 && ratio <= 6) {
-                    // 尝试通过尺寸和周围环境判断
-                    let hasNearbyInput = false;
-                    let currentNode = img.parentElement;
-                    let searchDepth = 0;
-                    
-                    while (currentNode && searchDepth < 3) {
-                        const inputs = currentNode.querySelectorAll('input[type="text"], input:not([type])');
-                        if (inputs.length > 0) {
-                            hasNearbyInput = true;
-                            break;
-                        }
-                        currentNode = currentNode.parentElement;
-                        searchDepth++;
-                    }
-                    
-                    // 放宽判断条件：如果尺寸合适或者有附近的输入框，更可能是验证码
-                    if (hasNearbyInput || (ratio >= 1.5 && ratio <= 4)) {
-                        if (config.debug) logger.info('[验证码] 通过尺寸和环境判断识别到验证码图片:', src, 
-                            '尺寸:', img.naturalWidth, 'x', img.naturalHeight, 
-                            '比例:', ratio.toFixed(2), 
-                            '附近有输入框:', hasNearbyInput);
-                        return true;
-                    }
-                }
+                if (ratio >= 1 && ratio <= 5) return true;
             }
         }
         
@@ -980,17 +483,14 @@
     
     // 主函数：检查验证码
     function checkForCaptcha(isForceCheck = false, isPopupCheck = false) {
-        console.log('[验证码调试] 开始检查验证码, 强制检查:', isForceCheck, '弹窗检查:', isPopupCheck);
+        // 添加处理间隔限制，避免频繁处理
+        const currentTime = Date.now();
+        if (!isForceCheck && currentTime - lastProcessTime < MIN_PROCESS_INTERVAL) {
+            return;
+        }
         
         if (isForceCheck) {
-            if (config.debug) {
-                if (isPopupCheck) {
-                    logger.info('[验证码] 检查弹窗中的验证码...');
-                } else {
-                    logger.info('[验证码] 强制检查验证码...');
-                }
-            }
-            console.log('[验证码调试] 强制检查，清空处理缓存');
+            log(isPopupCheck ? '检查弹窗中的验证码...' : '强制检查验证码...');
             processedCaptchas.clear();
         }
         
@@ -998,32 +498,21 @@
         const captchaImg = findCaptchaImage(isPopupCheck);
         
         // 如果没找到验证码图片，直接返回
-        if (!captchaImg) {
-            console.log('[验证码调试] 未找到验证码图片');
-            return;
-        }
-        
-        console.log('[验证码调试] 找到验证码图片:', captchaImg.src || captchaImg.id || '(无src)');
+        if (!captchaImg) return;
         
         // 检查是否已经处理过该验证码
-        const imageKey = captchaImg.src || captchaImg.id || captchaImg.className || Date.now().toString();
-        if (!isForceCheck && processedCaptchas.has(imageKey)) {
-            console.log('[验证码调试] 该验证码已经处理过，跳过');
-            return;
-        }
+        const imageKey = captchaImg.src || captchaImg.id || captchaImg.className;
+        if (!isForceCheck && processedCaptchas.has(imageKey)) return;
         
-        console.log('[验证码调试] 查找验证码输入框');
+        log('找到验证码图片: ' + (captchaImg.src ? captchaImg.src.substring(0, 50) + '...' : '无src属性'));
         
         // 查找输入框
         const captchaInput = findCaptchaInput(captchaImg, isPopupCheck);
         
         // 如果没找到输入框，直接返回
-        if (!captchaInput) {
-            console.log('[验证码调试] 未找到对应的输入框，无法处理验证码');
-            return;
-        }
+        if (!captchaInput) return;
         
-        console.log('[验证码调试] 找到验证码输入框:', captchaInput.id || captchaInput.name || '(无id/name)');
+        log('找到验证码输入框');
         
         // 保存当前验证码和输入框引用
         currentCaptchaImg = captchaImg;
@@ -1031,29 +520,26 @@
         
         // 标记为已处理
         processedCaptchas.add(imageKey);
+        lastProcessTime = currentTime;  // 更新最后处理时间
         
         // 即使输入框已有值，也继续处理，会在填写前清空
         if (captchaInput.value && captchaInput.value.trim() !== '') {
-            console.log('[验证码调试] 输入框已有值:', captchaInput.value, '，将清空并重新识别');
+            log('输入框已有值，将清空并重新识别');
         }
-        
-        console.log('[验证码调试] 开始获取图片数据');
         
         // 获取验证码图片数据
         getImageBase64(captchaImg)
             .then(base64 => {
                 if (!base64) {
-                    console.error('[验证码调试] 获取图片数据失败');
+                    log('获取图片数据失败', 'error');
                     return;
                 }
-                
-                console.log('[验证码调试] 成功获取图片数据，长度:', base64.length);
                 
                 // 发送到OCR服务器识别
                 recognizeCaptcha(base64, captchaInput);
             })
             .catch(err => {
-                console.error('[验证码调试] 处理图片时出错:', err);
+                log('处理图片时出错: ' + err.message, 'error');
             });
     }
     
@@ -1120,9 +606,18 @@
     
     // 深度搜索验证码图片
     function deepSearchCaptchaImage(root, selectors) {
+        // 设置查找超时，防止过度搜索
+        const startTime = Date.now();
+        const MAX_SEARCH_TIME = 500; // 最大搜索时间（毫秒）
+        
         // 1. 首先使用选择器尝试查找
         for (const selector of selectors) {
             try {
+                if (Date.now() - startTime > MAX_SEARCH_TIME) {
+                    log('验证码图片搜索超时', 'warn');
+                    return null;
+                }
+                
                 const elements = root.querySelectorAll(selector);
                 for (const img of elements) {
                     if (isVisible(img) && img.complete && img.naturalWidth > 0) {
@@ -1136,6 +631,8 @@
         
         // 2. 搜索所有图片，检查是否符合验证码特征
         try {
+            if (Date.now() - startTime > MAX_SEARCH_TIME) return null;
+            
             const allImages = root.querySelectorAll('img, canvas');
             for (const img of allImages) {
                 if (isCaptchaImage(img) && isVisible(img)) {
@@ -1146,26 +643,29 @@
             // 忽略错误
         }
         
-        // 3. 递归查找所有可能包含验证码的容器
+        // 3. 递归查找所有可能包含验证码的容器，但限制数量
         try {
-            // 查找可能包含验证码的容器
-            const captchaContainers = [
-                ...root.querySelectorAll('[class*="captcha"]'),
-                ...root.querySelectorAll('[id*="captcha"]'),
-                ...root.querySelectorAll('[class*="verify"]'),
-                ...root.querySelectorAll('[id*="verify"]'),
-                ...root.querySelectorAll('[class*="vcode"]'),
-                ...root.querySelectorAll('[id*="vcode"]'),
-                ...root.querySelectorAll('[class*="valid"]'),
-                ...root.querySelectorAll('[id*="valid"]'),
-                ...root.querySelectorAll('[class*="auth"]'),
-                ...root.querySelectorAll('[id*="auth"]'),
-                ...root.querySelectorAll('.login-form'),
-                ...root.querySelectorAll('form')
-            ];
+            if (Date.now() - startTime > MAX_SEARCH_TIME) return null;
+            
+            // 合并选择器减少DOM查询次数
+            const containerSelector = [
+                '[class*="captcha"]', '[id*="captcha"]', 
+                '[class*="verify"]', '[id*="verify"]', 
+                '[class*="vcode"]', '[id*="vcode"]',
+                '[class*="valid"]', '[id*="valid"]',
+                '[class*="auth"]', '[id*="auth"]',
+                '.login-form', 'form'
+            ].join(',');
+            
+            const captchaContainers = root.querySelectorAll(containerSelector);
+            // 限制容器数量
+            const MAX_CONTAINERS = 10;
+            const containersToCheck = Array.from(captchaContainers).slice(0, MAX_CONTAINERS);
             
             // 遍历每个容器，搜索图片
-            for (const container of captchaContainers) {
+            for (const container of containersToCheck) {
+                if (Date.now() - startTime > MAX_SEARCH_TIME) return null;
+                
                 // 搜索容器内的所有图片
                 const containerImages = container.querySelectorAll('img, canvas');
                 for (const img of containerImages) {
@@ -1181,9 +681,17 @@
         // 4. 深度遍历DOM树 (限制深度，避免过度搜索)
         if (config.searchDepth > 3) {
             try {
-                // 获取所有层级较深的容器
-                const deepContainers = root.querySelectorAll('div > div > div, div > div > div > div');
-                for (const container of deepContainers) {
+                if (Date.now() - startTime > MAX_SEARCH_TIME) return null;
+                
+                // 获取所有层级较深的容器，但限制数量
+                const deepSelector = 'div > div > div, div > div > div > div';
+                const deepContainers = root.querySelectorAll(deepSelector);
+                const MAX_DEEP_CONTAINERS = 8;
+                const containersToCheck = Array.from(deepContainers).slice(0, MAX_DEEP_CONTAINERS);
+                
+                for (const container of containersToCheck) {
+                    if (Date.now() - startTime > MAX_SEARCH_TIME) return null;
+                    
                     const containerImages = container.querySelectorAll('img, canvas');
                     for (const img of containerImages) {
                         if (isCaptchaImage(img) && isVisible(img)) {
@@ -1196,70 +704,39 @@
             }
         }
         
-        // 5. 额外深度搜索 (仅当搜索深度设置较高时)
-        if (config.searchDepth > 4) {
-            try {
-                // 获取所有可能的frame和iframe
-                const frames = root.querySelectorAll('iframe, frame');
-                for (const frame of frames) {
-                    try {
-                        // 尝试访问frame内容 (可能受同源策略限制)
-                        const frameDoc = frame.contentDocument || frame.contentWindow?.document;
-                        if (frameDoc) {
-                            // 在frame中搜索图片
-                            const frameImg = deepSearchCaptchaImage(frameDoc, selectors);
-                            if (frameImg) return frameImg;
-                        }
-                    } catch (e) {
-                        // 忽略跨域错误
-                    }
-                }
-            } catch (e) {
-                // 忽略错误
-            }
-        }
-        
         return null;
     }
     
-    // 查找页面上的弹窗元素
+    // 查找可能的弹窗
     function findPopups() {
-        const popups = [];
-        
-        // 查找可能的弹窗元素
         const popupSelectors = [
-            '.modal', 
-            '.dialog', 
-            '.popup', 
-            '.layer',
-            '.overlay',
-            '.mask',
-            '[role="dialog"]',
-            '[role="alertdialog"]',
-            '.ant-modal',
-            '.el-dialog',
-            '.layui-layer',
-            '.mui-popup',
-            '.weui-dialog'
+            '.dialog', '.modal', '.popup', '.layer', '.overlay', '.mask', '.float-panel',
+            '[class*="dialog"]', '[class*="modal"]', '[class*="popup"]', '[class*="layer"]', '[class*="mask"]',
+            '[class*="float"]', '[role="dialog"]', '[role="modal"]', '[aria-modal="true"]', '.el-dialog',
+            '.el-message-box', '.ant-modal', '.ant-modal-content', '.layui-layer', '.ivu-modal',
+            '.weui-dialog', '.van-dialog', '.mui-popup', '.am-modal', '.modal-content'
         ];
         
-        for (const selector of popupSelectors) {
-            const elements = document.querySelectorAll(selector);
-            for (const element of elements) {
-                if (isVisible(element)) {
-                    popups.push(element);
-                }
-            }
-        }
+        let popups = [];
         
-        // 如果没有找到特定选择器的弹窗，尝试基于样式特征查找
-        if (popups.length === 0) {
-            const allElements = document.querySelectorAll('div, section, aside');
-            for (const element of allElements) {
-                if (isPossiblePopup(element) && isVisible(element)) {
-                    popups.push(element);
+        // 合并选择器减少DOM查询次数
+        try {
+            const combinedSelector = popupSelectors.join(',');
+            const elements = document.querySelectorAll(combinedSelector);
+            
+            // 限制弹窗数量
+            const MAX_POPUPS = 5;
+            
+            // 优先处理显示的弹窗
+            for (const el of elements) {
+                if (popups.length >= MAX_POPUPS) break;
+                
+                if (isVisible(el)) {
+                    popups.push(el);
                 }
             }
+        } catch (e) {
+            log('查找弹窗时出错', 'error');
         }
         
         return popups;
@@ -1430,36 +907,53 @@
     
     // 查找距离验证码图片最近的输入框
     function findNearestInput(captchaImg, searchRoot = document) {
-        const inputs = searchRoot.querySelectorAll('input[type="text"], input:not([type])');
-        if (!inputs.length) return null;
-        
+        const MAX_SEARCH_DISTANCE = config.maxSearchDistance; // 最大搜索距离
         const imgRect = captchaImg.getBoundingClientRect();
-        const imgX = imgRect.left + imgRect.width / 2;
-        const imgY = imgRect.top + imgRect.height / 2;
+        const imgCenterX = (imgRect.left + imgRect.right) / 2;
+        const imgCenterY = (imgRect.top + imgRect.bottom) / 2;
         
-        let nearestInput = null;
+        let inputs = [];
+        let bestInput = null;
         let minDistance = Infinity;
         
-        for (const input of inputs) {
-            if (!isVisible(input) || input.type === 'password' || input.type === 'hidden') continue;
+        // 查找所有输入框
+        try {
+            // 优先查找可能的验证码输入框
+            inputs = Array.from(searchRoot.querySelectorAll('input[type="text"], input:not([type])'))
+                .filter(input => isPossibleCaptchaInput(input) && isVisible(input));
             
-            const inputRect = input.getBoundingClientRect();
-            const inputX = inputRect.left + inputRect.width / 2;
-            const inputY = inputRect.top + inputRect.height / 2;
-            
-            const distance = Math.sqrt(
-                Math.pow(imgX - inputX, 2) + 
-                Math.pow(imgY - inputY, 2)
-            );
-            
-            if (distance < minDistance) {
-                minDistance = distance;
-                nearestInput = input;
+            // 如果没有找到任何输入框，扩大搜索范围
+            if (inputs.length === 0) {
+                inputs = Array.from(searchRoot.querySelectorAll('input'))
+                    .filter(input => isVisible(input));
             }
+            
+            // 限制输入框数量，减少循环计算
+            const MAX_INPUTS = 10;
+            inputs = inputs.slice(0, MAX_INPUTS);
+            
+            for (const input of inputs) {
+                const inputRect = input.getBoundingClientRect();
+                const inputCenterX = (inputRect.left + inputRect.right) / 2;
+                const inputCenterY = (inputRect.top + inputRect.bottom) / 2;
+                
+                // 计算二维距离
+                const distance = Math.sqrt(
+                    Math.pow(imgCenterX - inputCenterX, 2) + 
+                    Math.pow(imgCenterY - inputCenterY, 2)
+                );
+                
+                // 更新最佳输入框
+                if (distance < minDistance && distance < MAX_SEARCH_DISTANCE) {
+                    minDistance = distance;
+                    bestInput = input;
+                }
+            }
+        } catch (e) {
+            log('查找输入框时出错: ' + e.message, 'error');
         }
         
-        // 只返回距离较近且可能是验证码输入框的输入框
-        return (minDistance < config.maxSearchDistance && isPossibleCaptchaInput(nearestInput)) ? nearestInput : null;
+        return bestInput;
     }
     
     // 检查元素是否可见
@@ -1470,319 +964,60 @@
     // 获取图片的base64数据
     async function getImageBase64(img) {
         try {
-            console.log('[验证码调试] 尝试获取图片数据:', img.src || img.id || 'Canvas元素');
+            // 创建canvas
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth || img.width;
+            canvas.height = img.naturalHeight || img.height;
             
-            // 检查缓存
-            const imgSrc = img.src || '';
-            const cacheKey = imgSrc;
+            // 在canvas上绘制图片
+            const ctx = canvas.getContext('2d');
             
-            // 如果有缓存，直接返回
-            const cachedData = captchaCache.get(cacheKey);
-            if (cachedData) {
-                console.log('[验证码调试] 使用缓存的图片数据');
-                return cachedData;
-            }
-            
-            // 对于Canvas元素
-            if (img.tagName && img.tagName.toLowerCase() === 'canvas') {
-                try {
-                    console.log('[验证码调试] 获取Canvas数据');
-                    const base64Data = img.toDataURL('image/png').split(',')[1];
-                    captchaCache.set(cacheKey, base64Data);
-                    return base64Data;
-                } catch (e) {
-                    console.error('[验证码调试] 获取Canvas数据失败:', e);
-                }
-            }
-            
-            // 对于img元素，尝试多种获取方法
-            if (img.tagName && img.tagName.toLowerCase() === 'img') {
-                console.log('[验证码调试] 使用优化后的图片获取方法');
+            try {
+                ctx.drawImage(img, 0, 0);
+                return canvas.toDataURL('image/png').split(',')[1];
+            } catch (e) {
+                console.error('[验证码] 绘制图片到Canvas失败，可能是跨域问题');
                 
-                // 方法1: 如果图片是data URL，直接获取
+                // 尝试直接获取src
                 if (img.src && img.src.startsWith('data:image')) {
-                    console.log('[验证码调试] 直接从data URL获取数据');
-                    const directData = img.src.split(',')[1];
-                    captchaCache.set(cacheKey, directData);
-                    return directData;
+                    return img.src.split(',')[1];
                 }
                 
-                // 方法2: 确保图片已加载完毕
-                if (!img.complete || !img.naturalWidth) {
-                    console.log('[验证码调试] 图片尚未加载完成，等待加载');
-                    
-                    try {
-                        await new Promise((resolve, reject) => {
-                            const originalSrc = img.src;
-                            const onLoad = () => {
-                                img.removeEventListener('load', onLoad);
-                                img.removeEventListener('error', onError);
-                                resolve();
-                            };
-                            
-                            const onError = () => {
-                                img.removeEventListener('load', onLoad);
-                                img.removeEventListener('error', onError);
-                                
-                                // 尝试重新加载，添加随机参数避免缓存问题
-                                if (img.src === originalSrc) {
-                                    console.log('[验证码调试] 图片加载失败，尝试重新加载');
-                                    img.src = originalSrc + (originalSrc.includes('?') ? '&' : '?') + '_nocache=' + Date.now();
-                                }
-                                
-                                // 无论是否成功都继续
-                                resolve();
-                            };
-                            
-                            img.addEventListener('load', onLoad);
-                            img.addEventListener('error', onError);
-                            
-                            // 设置超时
-                            setTimeout(() => {
-                                img.removeEventListener('load', onLoad);
-                                img.removeEventListener('error', onError);
-                                console.log('[验证码调试] 等待图片加载超时');
-                                resolve();
-                            }, 3000);
-                        });
-                    } catch (e) {
-                        console.error('[验证码调试] 等待图片加载过程出错:', e);
-                    }
-                }
-                
-                // 方法3: 使用Canvas绘制图片
-                try {
-                    console.log('[验证码调试] 尝试使用Canvas绘制图片');
-                    const canvas = document.createElement('canvas');
-                    const width = img.naturalWidth || img.width || 100;
-                    const height = img.naturalHeight || img.height || 40;
-                    
-                    // 确保尺寸有效
-                    if (width <= 0 || height <= 0) {
-                        console.error('[验证码调试] 图片尺寸无效:', width, 'x', height);
-                        return null;
-                    }
-                    
-                    canvas.width = width;
-                    canvas.height = height;
-                    const ctx = canvas.getContext('2d');
-                    
-                    ctx.drawImage(img, 0, 0, width, height);
-                    const base64Data = canvas.toDataURL('image/png').split(',')[1];
-                    
-                    if (base64Data && base64Data !== 'data:,') {
-                        console.log('[验证码调试] Canvas绘制成功');
-                        captchaCache.set(cacheKey, base64Data);
-                        return base64Data;
-                    } else {
-                        console.error('[验证码调试] Canvas绘制失败，结果为空');
-                    }
-                } catch (e) {
-                    console.error('[验证码调试] Canvas绘制出错(可能是跨域问题):', e);
-                }
-                
-                // 方法4: 使用新Image对象
-                try {
-                    console.log('[验证码调试] 尝试创建新Image对象');
-                    const result = await new Promise((resolve) => {
-                        const newImg = new Image();
-                        newImg.crossOrigin = 'Anonymous';
-                        
-                        newImg.onload = function() {
-                            try {
-                                const canvas = document.createElement('canvas');
-                                canvas.width = newImg.width;
-                                canvas.height = newImg.height;
-                                
-                                const ctx = canvas.getContext('2d');
-                                ctx.drawImage(newImg, 0, 0);
-                                
-                                const dataURL = canvas.toDataURL('image/png');
-                                const base64Data = dataURL.split(',')[1];
-                                console.log('[验证码调试] 新Image对象绘制成功');
-                                resolve(base64Data);
-                            } catch (e) {
-                                console.error('[验证码调试] 新Image对象绘制失败:', e);
-                                resolve(null);
-                            }
-                        };
-                        
-                        newImg.onerror = function() {
-                            console.error('[验证码调试] 新Image对象加载失败');
-                            resolve(null);
-                        };
-                        
-                        // 添加随机参数避免缓存
-                        const srcWithNocache = img.src + (img.src.includes('?') ? '&' : '?') + '_nocache=' + Date.now();
-                        newImg.src = srcWithNocache;
-                        
-                        // 设置超时
-                        setTimeout(() => {
-                            console.error('[验证码调试] 新Image对象加载超时');
-                            resolve(null);
-                        }, 3000);
-                    });
-                    
-                    if (result) {
-                        captchaCache.set(cacheKey, result);
-                        return result;
-                    }
-                } catch (e) {
-                    console.error('[验证码调试] 创建新Image对象过程出错:', e);
-                }
-                
-                // 方法5: 使用GM_xmlhttpRequest
-                try {
-                    console.log('[验证码调试] 尝试通过GM_xmlhttpRequest直接获取图片');
-                    const fetchedData = await fetchImage(img.src);
-                    if (fetchedData) {
-                        console.log('[验证码调试] GM_xmlhttpRequest获取成功');
-                        captchaCache.set(cacheKey, fetchedData);
-                        return fetchedData;
-                    }
-                } catch (e) {
-                    console.error('[验证码调试] GM_xmlhttpRequest获取失败:', e);
-                }
-                
-                // 方法6: 尝试fetch API
-                try {
-                    console.log('[验证码调试] 尝试使用fetch API');
-                    const response = await fetch(img.src, { 
-                        mode: 'no-cors',
-                        cache: 'no-store'
-                    });
-                    
-                    if (response.ok) {
-                        const blob = await response.blob();
-                        const base64Data = await new Promise((resolve) => {
-                            const reader = new FileReader();
-                            reader.onloadend = () => {
-                                const dataUrl = reader.result;
-                                const base64 = dataUrl.split(',')[1];
-                                resolve(base64);
-                            };
-                            reader.readAsDataURL(blob);
-                        });
-                        
-                        console.log('[验证码调试] fetch API获取成功');
-                        captchaCache.set(cacheKey, base64Data);
-                        return base64Data;
-                    }
-                } catch (e) {
-                    console.error('[验证码调试] fetch API获取失败:', e);
-                }
+                // 通过GM_xmlhttpRequest获取跨域图片
+                return await fetchImage(img.src);
             }
-            
-            console.error('[验证码调试] 所有图片获取方法均失败');
-            return null;
         } catch (e) {
-            console.error('[验证码调试] 获取图片base64出现严重错误:', e);
+            console.error('[验证码] 获取图片base64失败:', e);
             return null;
         }
     }
     
     // 通过GM_xmlhttpRequest获取图片
     function fetchImage(url) {
-        if (!url) {
-            console.error('[验证码调试] 无效的图片URL');
-            return Promise.resolve(null);
-        }
-        
-        console.log('[验证码调试] 尝试通过GM_xmlhttpRequest获取图片:', url.substring(0, 50) + '...');
-        
-        // 检查缓存
-        const cacheKey = url;
-        const cachedData = captchaCache.get(cacheKey);
-        if (cachedData) {
-            console.log('[验证码调试] 使用缓存的远程图片数据');
-            return Promise.resolve(cachedData);
-        }
-        
         return new Promise((resolve, reject) => {
-            // 添加随机参数避免缓存
-            const finalUrl = url + (url.includes('?') ? '&' : '?') + '_nocache=' + Date.now();
-            
             GM_xmlhttpRequest({
                 method: 'GET',
-                url: finalUrl,
+                url: url,
                 responseType: 'arraybuffer',
-                timeout: 5000, // 5秒超时
-                headers: {
-                    'Cache-Control': 'no-cache',
-                    'Pragma': 'no-cache',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                },
                 onload: function(response) {
                     try {
-                        console.log('[验证码调试] GM_xmlhttpRequest请求成功，状态:', response.status);
-                        
-                        if (response.status !== 200) {
-                            console.error('[验证码调试] 请求失败，状态码:', response.status);
-                            reject(new Error('HTTP status: ' + response.status));
-                            return;
-                        }
-                        
                         const binary = new Uint8Array(response.response);
-                        if (!binary || binary.length === 0) {
-                            console.error('[验证码调试] 接收到空响应');
-                            reject(new Error('Empty response'));
-                            return;
-                        }
-                        
                         const base64 = btoa(
                             Array.from(binary).map(byte => String.fromCharCode(byte)).join('')
                         );
-                        
-                        // 存入缓存
-                        captchaCache.set(cacheKey, base64);
-                        console.log('[验证码调试] 图片获取成功，大小:', binary.length, '字节');
-                        
                         resolve(base64);
                     } catch (e) {
-                        console.error('[验证码调试] 处理响应数据时出错:', e);
                         reject(e);
                     }
                 },
-                onerror: function(error) {
-                    console.error('[验证码调试] GM_xmlhttpRequest请求失败:', error);
-                    reject(error);
-                },
-                ontimeout: function() {
-                    console.error('[验证码调试] GM_xmlhttpRequest请求超时');
-                    reject(new Error('Request timeout'));
-                }
+                onerror: reject
             });
         });
     }
     
     // 识别验证码
     function recognizeCaptcha(imageBase64, inputElement) {
-        console.log('[验证码调试] 准备发送图片到OCR服务器识别');
-        
-        // 检查缓存
-        const cacheKey = imageBase64.slice(0, 100); // 使用图片数据的前100个字符作为缓存键
-        const cachedResult = captchaCache.get('ocr_' + cacheKey);
-        
-        if (cachedResult) {
-            console.log('[验证码调试] 使用缓存的识别结果:', cachedResult);
-            
-            // 填写验证码
-            inputElement.value = cachedResult;
-            
-            // 触发事件
-            triggerInputEvents(inputElement);
-            
-            console.log('[验证码调试] 已自动填写(缓存):', cachedResult);
-            
-            // 清除当前处理的验证码
-            currentCaptchaImg = null;
-            currentCaptchaInput = null;
-            
-            return;
-        }
-        
-        console.log('[验证码调试] 发送到OCR服务器识别...');
-        console.log('[验证码调试] 使用服务器:', OCR_SERVER);
+        log('发送到OCR服务器识别...');
         
         GM_xmlhttpRequest({
             method: 'POST',
@@ -1794,83 +1029,60 @@
             timeout: 10000, // 10秒超时
             onload: function(response) {
                 try {
-                    console.log('[验证码调试] 收到服务器响应，状态码:', response.status);
-                    
-                    if (response.status !== 200) {
-                        console.error('[验证码调试] 服务器返回错误状态码:', response.status);
-                        console.error('[验证码调试] 响应内容:', response.responseText);
-                        return;
-                    }
+                    log('收到服务器响应');
                     
                     const result = JSON.parse(response.responseText);
-                    console.log('[验证码调试] 解析响应:', result);
                     
                     if (result.code === 0 && result.data) {
                         const captchaText = result.data.trim();
                         
                         if (captchaText) {
-                            // 存入缓存
-                            captchaCache.set('ocr_' + cacheKey, captchaText);
-                            
-                            console.log('[验证码调试] 识别成功:', captchaText);
+                            log('识别成功: ' + captchaText);
                             
                             // 填写验证码
                             inputElement.value = captchaText;
                             
-                            // 触发事件
-                            triggerInputEvents(inputElement);
+                            // 触发input事件
+                            const event = new Event('input', { bubbles: true });
+                            inputElement.dispatchEvent(event);
                             
-                            console.log('[验证码调试] 已自动填写:', captchaText);
+                            // 触发change事件
+                            const changeEvent = new Event('change', { bubbles: true });
+                            inputElement.dispatchEvent(changeEvent);
+                            
+                            log('已自动填写: ' + captchaText, 'success');
                             
                             // 尝试查找并点击提交按钮
-                            if (config.autoSubmit) {
-                                tryFindAndClickSubmitButton(inputElement);
-                            } else {
-                                console.log('[验证码调试] 自动提交已禁用，不点击提交按钮');
-                            }
+                            tryFindAndClickSubmitButton(inputElement);
                         } else {
-                            console.log('[验证码调试] 识别结果为空');
+                            log('识别结果为空');
                         }
                     } else {
-                        console.error('[验证码调试] 识别失败:', result.message || '未知错误');
+                        log('识别失败: ' + (result.message || '未知错误'), 'warn');
                     }
                 } catch (e) {
-                    console.error('[验证码调试] 解析OCR结果时出错:', e);
-                    console.error('[验证码调试] 原始响应:', response.responseText);
-                } finally {
-                    // 清除当前处理的验证码
-                    currentCaptchaImg = null;
-                    currentCaptchaInput = null;
+                    log('解析OCR结果时出错: ' + e.message, 'error');
                 }
+                
+                // 清除当前处理的验证码
+                currentCaptchaImg = null;
+                currentCaptchaInput = null;
             },
             onerror: function(error) {
-                console.error('[验证码调试] OCR请求失败:', error);
-                console.error('[验证码调试] 请检查服务器地址是否正确，以及服务器是否已启动');
+                log('OCR请求失败', 'error');
                 
                 // 清除当前处理的验证码
                 currentCaptchaImg = null;
                 currentCaptchaInput = null;
             },
             ontimeout: function() {
-                console.error('[验证码调试] OCR请求超时，10秒内未收到响应');
-                console.error('[验证码调试] 请检查服务器是否已启动，网络连接是否正常');
+                log('OCR请求超时', 'error');
                 
                 // 清除当前处理的验证码
                 currentCaptchaImg = null;
                 currentCaptchaInput = null;
             }
         });
-    }
-    
-    // 触发输入框事件
-    function triggerInputEvents(inputElement) {
-        // 触发input事件
-        const event = new Event('input', { bubbles: true });
-        inputElement.dispatchEvent(event);
-        
-        // 触发change事件
-        const changeEvent = new Event('change', { bubbles: true });
-        inputElement.dispatchEvent(changeEvent);
     }
     
     // 尝试查找并点击提交按钮
@@ -1880,7 +1092,7 @@
         if (form) {
             const submitButton = form.querySelector('button[type="submit"], input[type="submit"]');
             if (submitButton) {
-                if (config.debug) logger.info('[验证码] 找到验证码提交按钮，但不自动点击');
+                if (config.debug) console.log('[验证码] 找到验证码提交按钮，但不自动点击');
             }
         }
         
@@ -1889,41 +1101,48 @@
         if (parentContainer) {
             const submitButton = parentContainer.querySelector('button, input[type="submit"], input[type="button"], a.btn, a.button');
             if (submitButton && isLoginButton(submitButton)) {
-                if (config.debug) logger.info('[验证码] 找到验证码提交按钮，但不自动点击');
+                if (config.debug) console.log('[验证码] 找到验证码提交按钮，但不自动点击');
             }
         }
     }
     
     // 主函数：检查滑块验证码
     function checkForSliderCaptcha(isForceCheck = false) {
-        if (config.debug) logger.info('[验证码] ' + (isForceCheck ? '强制' : '常规') + '检查滑块验证码...');
+        // 添加处理间隔限制，避免频繁处理
+        const currentTime = Date.now();
+        if (!isForceCheck && currentTime - lastProcessTime < MIN_PROCESS_INTERVAL) {
+            return;
+        }
+        
+        log((isForceCheck ? '强制' : '常规') + '检查滑块验证码...');
         
         // 查找滑块验证码
         const result = findSliderCaptcha();
         
         if (!result) {
-            if (config.debug) logger.info('[验证码] 未找到滑块验证码元素');
+            log('未找到滑块验证码元素', 'info', true); // 使用第三个参数标记为低优先级日志
             return;
         }
         
         const { slider, track, container } = result;
         
-        if (config.debug) logger.info('[验证码] 找到滑块验证码:');
+        log('找到滑块验证码');
         
         // 检查是否已处理过该滑块
         const sliderKey = slider.outerHTML;
         if (processedCaptchas.has(sliderKey) && !isForceCheck) {
-            if (config.debug) logger.info('[验证码] 该滑块已被处理过，跳过');
+            log('该滑块已被处理过，跳过');
             return;
         }
         
         // 记录该滑块已处理
         processedCaptchas.add(sliderKey);
+        lastProcessTime = currentTime;  // 更新最后处理时间
         
         // 计算滑动距离
         calculateSlideDistance(slider, track, container).then(distance => {
             if (distance) {
-                if (config.debug) logger.info('[验证码] 计算的滑动距离:', distance, 'px');
+                log('计算的滑动距离: ' + distance + 'px');
                 
                 // 模拟滑动
                 simulateSliderDrag(slider, distance);
@@ -1945,14 +1164,14 @@
         
         for (const keyword of sliderKeywords) {
             if (className.includes(keyword) || id.includes(keyword) || role.includes(keyword)) {
-                if (config.debug) logger.info('[验证码] 通过关键词检测到滑块:', keyword, element);
+                if (config.debug) console.log('[验证码] 通过关键词检测到滑块:', keyword, element);
                 return true;
             }
         }
         
         // 检查内部元素
         if (element.querySelector('.slider, .drag, .slide, .sliderBtn, .handler, [class*="slider"], [class*="drag"]')) {
-            if (config.debug) logger.info('[验证码] 通过子元素检测到滑块:', element);
+            if (config.debug) console.log('[验证码] 通过子元素检测到滑块:', element);
             return true;
         }
         
@@ -1961,7 +1180,7 @@
     
     // 查找滑块验证码元素
     function findSliderCaptcha() {
-        if (config.debug) logger.info('[验证码] 开始查找滑块验证码元素...');
+        if (config.debug) console.log('[验证码] 开始查找滑块验证码元素...');
         
         // 常见滑块验证码选择器
         const sliderSelectors = [
@@ -1996,7 +1215,7 @@
             for (const element of elements) {
                 if (isVisible(element)) {
                     container = element;
-                    if (config.debug) logger.info('[验证码] 找到滑块容器:', selector, element);
+                    if (config.debug) console.log('[验证码] 找到滑块容器:', selector, element);
                     break;
                 }
             }
@@ -2009,7 +1228,7 @@
             for (const element of possibleContainers) {
                 if (isVisible(element) && isPossibleSlider(element)) {
                     container = element;
-                    if (config.debug) logger.info('[验证码] 找到可能的滑块容器:', element);
+                    if (config.debug) console.log('[验证码] 找到可能的滑块容器:', element);
                     break;
                 }
             }
@@ -2030,7 +1249,7 @@
                             for (const element of elements) {
                                 if (isVisible(element)) {
                                     container = element;
-                                    if (config.debug) logger.info('[验证码] 在iframe中找到滑块容器:', selector, element);
+                                    if (config.debug) console.log('[验证码] 在iframe中找到滑块容器:', selector, element);
                                     break;
                                 }
                             }
@@ -2042,13 +1261,13 @@
                     if (container) break;
                 }
             } catch (e) {
-                logger.error('[验证码] 检查iframe时出错:', e);
+                console.error('[验证码] 检查iframe时出错:', e);
             }
         }
         
         // 如果没找到容器，直接返回null
         if (!container) {
-            if (config.debug) logger.info('[验证码] 未找到滑块容器');
+            if (config.debug) console.log('[验证码] 未找到滑块容器');
             return null;
         }
         
@@ -2059,7 +1278,7 @@
                 const element = container.querySelector(selector);
                 if (element && isVisible(element)) {
                     slider = element;
-                    if (config.debug) logger.info('[验证码] 找到滑块按钮:', selector, element);
+                    if (config.debug) console.log('[验证码] 找到滑块按钮:', selector, element);
                     break;
                 }
             } catch (e) {
@@ -2085,7 +1304,7 @@
                         className.includes('slider') || className.includes('handler') || 
                         className.includes('drag')) {
                         slider = element;
-                        if (config.debug) logger.info('[验证码] 找到可能的滑块按钮:', element);
+                        if (config.debug) console.log('[验证码] 找到可能的滑块按钮:', element);
                         break;
                     }
                 }
@@ -2105,7 +1324,7 @@
                 // 滑块通常较小
                 if (el.offsetWidth < 60 && el.offsetHeight < 60) {
                     slider = el;
-                    if (config.debug) logger.info('[验证码] 通过光标样式找到可能的滑块:', el);
+                    if (config.debug) console.log('[验证码] 通过光标样式找到可能的滑块:', el);
                     break;
                 }
             }
@@ -2113,13 +1332,13 @@
         
         // 如果仍然没找到滑块，尝试点击交互元素
         if (!slider && config.debug) {
-            logger.info('[验证码] 未能找到滑块按钮，尝试查找其他交互元素');
+            console.log('[验证码] 未能找到滑块按钮，尝试查找其他交互元素');
             
             // 查找可能的交互元素
             const interactiveElements = container.querySelectorAll('div[role="button"], div.slider, div.handler, div.btn');
             for (const el of interactiveElements) {
                 if (isVisible(el)) {
-                    if (config.debug) logger.info('[验证码] 找到可能的交互元素:', el);
+                    if (config.debug) console.log('[验证码] 找到可能的交互元素:', el);
                     slider = el;
                     break;
                 }
@@ -2128,7 +1347,7 @@
         
         // 如果没找到滑块，返回null
         if (!slider) {
-            if (config.debug) logger.info('[验证码] 未找到滑块按钮');
+            if (config.debug) console.log('[验证码] 未找到滑块按钮');
             return null;
         }
         
@@ -2139,7 +1358,7 @@
                 const element = container.querySelector(selector);
                 if (element && isVisible(element)) {
                     track = element;
-                    if (config.debug) logger.info('[验证码] 找到滑块轨道:', selector, element);
+                    if (config.debug) console.log('[验证码] 找到滑块轨道:', selector, element);
                     break;
                 }
             } catch (e) {
@@ -2153,7 +1372,7 @@
             const parent = slider.parentElement;
             if (parent && parent !== container) {
                 track = parent;
-                if (config.debug) logger.info('[验证码] 使用滑块父元素作为轨道:', parent);
+                if (config.debug) console.log('[验证码] 使用滑块父元素作为轨道:', parent);
             } else {
                 // 否则查找可能的轨道元素
                 const possibleTracks = container.querySelectorAll('div');
@@ -2165,7 +1384,7 @@
                     if (element.offsetWidth > 100 && element.offsetHeight < 50 && 
                         (styles.position === 'relative' || styles.position === 'absolute')) {
                         track = element;
-                        if (config.debug) logger.info('[验证码] 找到可能的滑块轨道:', element);
+                        if (config.debug) console.log('[验证码] 找到可能的滑块轨道:', element);
                         break;
                     }
                 }
@@ -2175,7 +1394,7 @@
         // 如果仍然找不到轨道，使用容器作为轨道的后备方案
         if (!track) {
             track = container;
-            if (config.debug) logger.info('[验证码] 未找到明确的轨道，使用容器作为轨道');
+            if (config.debug) console.log('[验证码] 未找到明确的轨道，使用容器作为轨道');
         }
         
         return { slider, track, container };
@@ -2188,7 +1407,7 @@
             if (config.useSlideAPI) {
                 const apiDistance = await analyzeSlideImagesWithAPI(slider, track, container);
                 if (apiDistance) {
-                    if (config.debug) logger.info('[验证码] 使用API计算的滑动距离:', apiDistance);
+                    if (config.debug) console.log('[验证码] 使用API计算的滑动距离:', apiDistance);
                     return apiDistance;
                 }
             }
@@ -2221,37 +1440,20 @@
                 return distance;
             }
         } catch (e) {
-            logger.error('[验证码] 计算滑动距离时出错:', e);
+            console.error('[验证码] 计算滑动距离时出错:', e);
             return null;
         }
     }
     
-    // 使用API分析滑块图片
+    // 使用服务器API分析滑块图片
     async function analyzeSlideImagesWithAPI(slider, track, container) {
-        if (config.debug) logger.info('[验证码] 尝试使用API分析滑块图片...');
+        if (config.debug) console.log('[验证码] 尝试使用API分析滑块图片...');
         
         try {
             // 找到背景图
             const bgImage = findBackgroundImage(container);
             // 找到滑块图
             const puzzleImage = findPuzzleImage(container);
-            
-            // 生成缓存键
-            const generateCacheKey = (img) => {
-                if (!img) return '';
-                return img.src || (img.style && img.style.backgroundImage) || '';
-            };
-            
-            const bgCacheKey = generateCacheKey(bgImage);
-            const puzzleCacheKey = generateCacheKey(puzzleImage);
-            const combinedKey = 'slide_' + bgCacheKey + '_' + puzzleCacheKey;
-            
-            // 检查缓存
-            const cachedResult = captchaCache.get(combinedKey);
-            if (cachedResult) {
-                if (config.debug) logger.info('[验证码] 使用缓存的滑块分析结果:', cachedResult);
-                return cachedResult;
-            }
             
             let bgBase64 = null;
             let puzzleBase64 = null;
@@ -2260,27 +1462,65 @@
             // 获取背景图和滑块图的base64
             if (bgImage) {
                 bgBase64 = await getImageBase64(bgImage);
-                if (config.debug) logger.info('[验证码] 成功获取背景图');
+                if (config.debug) console.log('[验证码] 成功获取背景图');
             }
             
             if (puzzleImage) {
                 puzzleBase64 = await getImageBase64(puzzleImage);
-                if (config.debug) logger.info('[验证码] 成功获取滑块图');
+                if (config.debug) console.log('[验证码] 成功获取滑块图');
             }
             
             // 如果无法获取单独的图片，尝试获取整个容器截图
             if ((!bgBase64 || !puzzleBase64) && container) {
                 try {
-                    // 使用简化的方法获取容器截图
-                    fullBase64 = await getContainerScreenshot(container);
+                    // 创建canvas
+                    const canvas = document.createElement('canvas');
+                    const rect = container.getBoundingClientRect();
+                    canvas.width = rect.width;
+                    canvas.height = rect.height;
+                    
+                    const ctx = canvas.getContext('2d');
+                    
+                    // 使用html2canvas库如果可用
+                    if (typeof html2canvas !== 'undefined') {
+                        const canvas = await html2canvas(container, {
+                            logging: false,
+                            useCORS: true,
+                            allowTaint: true
+                        });
+                        fullBase64 = canvas.toDataURL('image/png').split(',')[1];
+                        if (config.debug) console.log('[验证码] 使用html2canvas获取了容器截图');
+                    } else {
+                        // 尝试获取容器背景
+                        const computedStyle = window.getComputedStyle(container);
+                        if (computedStyle.backgroundImage && computedStyle.backgroundImage !== 'none') {
+                            const bgUrl = computedStyle.backgroundImage.replace(/url\(['"]?(.*?)['"]?\)/i, '$1');
+                            if (bgUrl) {
+                                try {
+                                    const img = new Image();
+                                    img.crossOrigin = 'Anonymous';
+                                    await new Promise((resolve, reject) => {
+                                        img.onload = resolve;
+                                        img.onerror = reject;
+                                        img.src = bgUrl;
+                                    });
+                                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                                    fullBase64 = canvas.toDataURL('image/png').split(',')[1];
+                                    if (config.debug) console.log('[验证码] 获取了容器背景图');
                                 } catch (e) {
-                    logger.error('[验证码] 获取容器截图失败:', e);
+                                    console.error('[验证码] 获取容器背景图失败:', e);
+                                }
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error('[验证码] 获取容器截图失败:', e);
                 }
             }
             
             // 发送到服务器分析
             if ((bgBase64 && puzzleBase64) || fullBase64) {
-                if (config.debug) logger.info('[验证码] 发送图片到服务器分析');
+                if (config.debug) console.log('[验证码] 发送图片到服务器分析');
                 
                 return new Promise((resolve, reject) => {
                     const data = {};
@@ -2304,213 +1544,30 @@
                                 const result = JSON.parse(response.responseText);
                                 
                                 if (result.code === 0 && result.data) {
-                                    if (config.debug) logger.info('[验证码] 服务器返回的滑动距离:', result.data.x);
-                                    
-                                    // 存入缓存
-                                    captchaCache.set(combinedKey, result.data.x);
-                                    
+                                    if (config.debug) console.log('[验证码] 服务器返回的滑动距离:', result.data.x);
                                     resolve(result.data.x);
                                 } else {
-                                    logger.error('[验证码] 服务器分析失败:', result.message || '未知错误');
+                                    console.error('[验证码] 服务器分析失败:', result.message || '未知错误');
                                     resolve(null);
                                 }
                             } catch (e) {
-                                logger.error('[验证码] 解析服务器响应时出错:', e);
+                                console.error('[验证码] 解析服务器响应时出错:', e);
                                 resolve(null);
                             }
                         },
                         onerror: function(error) {
-                            logger.error('[验证码] 滑块分析请求失败:', error);
+                            console.error('[验证码] 滑块分析请求失败:', error);
                             resolve(null);
                         }
                     });
                 });
             } else {
-                if (config.debug) logger.info('[验证码] 无法获取有效的图片数据');
+                if (config.debug) console.log('[验证码] 无法获取有效的图片数据');
                 return null;
             }
         } catch (e) {
-            logger.error('[验证码] API分析滑块图片时出错:', e);
+            console.error('[验证码] API分析滑块图片时出错:', e);
             return null;
-        }
-    }
-    
-    // 简化的获取容器截图方法
-    async function getContainerScreenshot(container) {
-        try {
-            // 创建canvas
-            const canvas = document.createElement('canvas');
-            const rect = container.getBoundingClientRect();
-            canvas.width = rect.width;
-            canvas.height = rect.height;
-            
-            const ctx = canvas.getContext('2d');
-            
-            // 尝试获取容器背景
-            const computedStyle = window.getComputedStyle(container);
-            if (computedStyle.backgroundImage && computedStyle.backgroundImage !== 'none') {
-                const bgUrl = computedStyle.backgroundImage.replace(/url\(['"]?(.*?)['"]?\)/i, '$1');
-                if (bgUrl) {
-                    try {
-                        const img = new Image();
-                        img.crossOrigin = 'Anonymous';
-                        await new Promise((resolve, reject) => {
-                            img.onload = resolve;
-                            img.onerror = reject;
-                            img.src = bgUrl;
-                        });
-                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                        return canvas.toDataURL('image/png').split(',')[1];
-                    } catch (e) {
-                        logger.error('[验证码] 获取容器背景图失败:', e);
-                    }
-                }
-            }
-            
-            // 如果无法获取背景，尝试绘制容器内的所有图片
-            const images = container.querySelectorAll('img');
-            for (const img of images) {
-                if (isVisible(img)) {
-                    try {
-                        const imgRect = img.getBoundingClientRect();
-                        const x = imgRect.left - rect.left;
-                        const y = imgRect.top - rect.top;
-                        ctx.drawImage(img, x, y, img.width, img.height);
-                    } catch (e) {
-                        // 忽略错误，继续处理其他图片
-                    }
-                }
-            }
-            
-            return canvas.toDataURL('image/png').split(',')[1];
-        } catch (e) {
-            logger.error('[验证码] 获取容器截图失败:', e);
-            return null;
-        }
-    }
-    
-    // 模拟滑块拖动
-    function simulateSliderDrag(slider, distance) {
-        if (config.debug) logger.info('[验证码] 开始模拟滑块拖动，目标距离:', distance);
-        
-        try {
-            // 获取滑块位置
-            const rect = slider.getBoundingClientRect();
-            const startX = rect.left + rect.width / 2;
-            const startY = rect.top + rect.height / 2;
-            
-            // 创建鼠标事件
-            const createMouseEvent = (type, x, y) => {
-                const event = new MouseEvent(type, {
-                    view: window,
-                    bubbles: true,
-                    cancelable: true,
-                    clientX: x,
-                    clientY: y,
-                    button: 0
-                });
-                return event;
-            };
-            
-            // 模拟人类拖动的时间和路径 - 使用更自然的曲线
-            const generateHumanLikeTrack = (distance) => {
-                // 使用更少的步骤，降低CPU使用率
-                const totalSteps = Math.max(5, Math.min(20, Math.floor(distance / 15)));
-                const track = [];
-                
-                // 生成加速-匀速-减速的轨迹
-                for (let i = 0; i < totalSteps; i++) {
-                    const progress = i / (totalSteps - 1);
-                    let factor;
-                    
-                    // 使用三段式加速度模型
-                    if (progress < 0.2) {
-                        // 起步阶段，加速
-                        factor = progress * 2;
-                    } else if (progress > 0.8) {
-                        // 结束阶段，减速
-                        factor = 0.8 + (progress - 0.8) * 0.2;
-                    } else {
-                        // 中间阶段，匀速+微波动
-                        factor = 0.4 + progress * 0.5 + (Math.random() - 0.5) * 0.1;
-                    }
-                    
-                    // 添加轻微的垂直方向波动，模拟人手抖动
-                    const xPos = Math.round(distance * factor);
-                    const yPos = Math.round((Math.random() - 0.5) * 3);
-                    
-                    track.push({ x: xPos, y: yPos });
-                }
-                
-                // 确保最后一步到达目标位置
-                track[track.length - 1].x = distance;
-                track[track.length - 1].y = 0;
-                
-                return track;
-            };
-            
-            // 生成人类轨迹
-            const track = generateHumanLikeTrack(distance);
-            const trackLength = track.length;
-            
-            // 开始拖动，计算合适的延迟，较短距离使用较快速度
-            const baseDelay = Math.min(25, Math.max(15, config.sliderSpeed - distance / 50));
-            const totalDuration = baseDelay * trackLength;
-            
-            if (config.debug) logger.info(`[验证码] 计划拖动轨迹: ${trackLength}步, 总时长: ${totalDuration}ms`);
-            
-            // 开始拖动
-            slider.dispatchEvent(createMouseEvent('mousedown', startX, startY));
-            
-            // 使用更高效的轨迹执行方法
-            let currentStep = 0;
-            
-            const moveSlider = () => {
-                if (currentStep < trackLength) {
-                    const point = track[currentStep];
-                    const newX = startX + point.x;
-                    const newY = startY + point.y;
-                    
-                    // 移动到下一个位置
-                    slider.dispatchEvent(createMouseEvent('mousemove', newX, newY));
-                    
-                    // 调试信息，减少输出频率
-                    if (config.debug && (currentStep === 0 || currentStep === trackLength - 1 || currentStep % 5 === 0)) {
-                        logger.info(`[验证码] 拖动进度: ${Math.round((currentStep / (trackLength - 1)) * 100)}%, 位置: (${point.x}, ${point.y})`);
-                    }
-                    
-                    currentStep++;
-                    
-                    // 使用setTimeout而不是setInterval，更好地控制轨迹执行
-                    setTimeout(moveSlider, baseDelay);
-                } else {
-                    // 完成拖动后释放鼠标
-                    const finalX = startX + distance;
-                    slider.dispatchEvent(createMouseEvent('mouseup', finalX, startY));
-                    
-                    if (config.debug) logger.info('[验证码] 滑块拖动完成');
-                    
-                    // 尝试触发额外的事件
-                    try {
-                        // 有些验证码需要触发额外事件
-                        slider.dispatchEvent(new Event('dragend', { bubbles: true }));
-                        
-                        // 只有在需要时才触发额外事件
-                        const slideContainer = slider.closest('.captcha-container, .slider-container, [class*="captcha"], [class*="slider"]');
-                        if (slideContainer) {
-                            slideContainer.dispatchEvent(new Event('mouseup', { bubbles: true }));
-                            slideContainer.dispatchEvent(new Event('drop', { bubbles: true }));
-                        }
-                    } catch (e) {
-                        // 忽略错误
-                    }
-                }
-            };
-            
-            // 开始移动
-            moveSlider();
-        } catch (e) {
-            logger.error('[验证码] 模拟滑块拖动时出错:', e);
         }
     }
     
@@ -2578,192 +1635,101 @@
         return null;
     }
     
-    // 处理点选验证码
-    function checkForClickCaptcha(forceCheck = false) {
-        if (!isEnabled || !config.captchaTypes.clickCaptcha) return;
+    // 模拟滑块拖动
+    function simulateSliderDrag(slider, distance) {
+        if (config.debug) console.log('[验证码] 开始模拟滑块拖动，目标距离:', distance);
         
         try {
-            // 查找常见的点选验证码容器
-            const clickCaptchaContainers = Array.from(document.querySelectorAll(
-                '.captcha-click, .click-captcha, .point-captcha, ' +
-                '[class*="clickCaptcha"], [class*="pointCaptcha"], ' +
-                '[id*="clickCaptcha"], [id*="pointCaptcha"]'
-            ));
+            // 获取滑块位置
+            const rect = slider.getBoundingClientRect();
+            const startX = rect.left + rect.width / 2;
+            const startY = rect.top + rect.height / 2;
             
-            // 如果有自定义选择器，添加到检测列表
-            if (config.customSelectors) {
-                const customSelectors = config.customSelectors.split(',').map(s => s.trim()).filter(Boolean);
-                if (customSelectors.length > 0) {
-                    for (const selector of customSelectors) {
-                        try {
-                            const elements = Array.from(document.querySelectorAll(selector));
-                            clickCaptchaContainers.push(...elements);
-                        } catch (e) {
-                            logger.error('自定义选择器错误:', selector, e);
-                        }
-                    }
-                }
-            }
-            
-            if (clickCaptchaContainers.length === 0) return;
-            
-            for (const container of clickCaptchaContainers) {
-                // 如果已处理过，跳过
-                if (processedCaptchas.has(container) && !forceCheck) continue;
-                
-                // 查找点选验证码的图片
-                const captchaImg = container.querySelector('img');
-                if (!captchaImg) continue;
-                
-                // 查找点选提示文本（通常包含"请点击"或"请选择"等字样）
-                const captchaText = container.innerText;
-                const hasClickPrompt = /请点击|请选择|点击图中|选择所有|click|select/i.test(captchaText);
-                
-                if (!captchaImg.src || !hasClickPrompt) continue;
-                
-                // 标记为已处理
-                processedCaptchas.add(container);
-                
-                // 发送识别请求
-                logger.info('检测到点选验证码:', captchaImg.src);
-                
-                // 获取验证码图片数据
-                getImageData(captchaImg.src)
-                    .then(imageData => {
-                        // 从提示文本中提取需要点击的目标
-                        const targetMatch = captchaText.match(/请点击[""](.+?)[""]|请选择[""](.+?)[""]|点击图中的[""](.+?)[""]|选择所有[""](.+?)[""]|click[""](.+?)[""]|select[""](.+?)[""]/i);
-                        const target = targetMatch ? (targetMatch[1] || targetMatch[2] || targetMatch[3] || targetMatch[4] || targetMatch[5] || targetMatch[6] || '') : '';
-                        
-                        // 使用服务器识别点选目标位置
-                        return recognizeClickCaptcha(imageData, target);
-                    })
-                    .then(result => {
-                        if (!result || !result.success || !result.points || result.points.length === 0) {
-                            logger.warn('点选验证码识别失败:', result);
-                            return;
-                        }
-                        
-                        logger.info('点选验证码识别成功:', result);
-                        
-                        // 延迟执行点击操作，使其看起来更自然
-                        setTimeout(() => {
-                            // 点击识别到的位置
-                            simulateClicksOnCaptcha(captchaImg, result.points);
-                        }, config.delay);
-                    })
-                    .catch(error => {
-                        logger.error('点选验证码识别错误:', error);
-                    });
-            }
-        } catch (error) {
-            logger.error('检查点选验证码时出错:', error);
-        }
-    }
-    
-    // 识别点选验证码
-    function recognizeClickCaptcha(imageData, target) {
-        return new Promise((resolve, reject) => {
-            // 构建请求数据
-            const data = {
-                image: imageData,
-                target: target || '',
-                type: 'click'
-            };
-            
-            // 检查缓存
-            const cacheKey = 'click_' + hashString(imageData + target);
-            const cachedResult = captchaCache.get(cacheKey);
-            
-            if (cachedResult) {
-                logger.info('使用缓存的点选验证码结果');
-                resolve(cachedResult);
-                return;
-            }
-            
-            // 发送识别请求
-            GM_xmlhttpRequest({
-                method: 'POST',
-                url: OCR_SERVER,
-                data: JSON.stringify(data),
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                onload: function(response) {
-                    try {
-                        const result = JSON.parse(response.responseText);
-                        
-                        // 缓存结果
-                        if (result && result.success && result.points && result.points.length > 0) {
-                            captchaCache.set(cacheKey, result);
-                        }
-                        
-                        resolve(result);
-                    } catch (e) {
-                        reject(e);
-                    }
-                },
-                onerror: function(error) {
-                    reject(error);
-                }
-            });
-        });
-    }
-    
-    // 模拟点击验证码上的点
-    function simulateClicksOnCaptcha(captchaImg, points) {
-        try {
-            // 获取图片位置和尺寸
-            const rect = captchaImg.getBoundingClientRect();
-            
-            // 依次点击每个点
-            for (let i = 0; i < points.length; i++) {
-                const point = points[i];
-                
-                // 计算相对于浏览器窗口的坐标
-                const clientX = rect.left + point.x;
-                const clientY = rect.top + point.y;
-                
-                // 延迟点击，使每次点击间隔不同，更像人类操作
-                setTimeout(() => {
-                    // 创建并触发鼠标事件
-                    const clickEvent = new MouseEvent('click', {
+            // 创建鼠标事件
+            const createMouseEvent = (type, x, y) => {
+                const event = new MouseEvent(type, {
+                    view: window,
                     bubbles: true,
                     cancelable: true,
-                        view: window,
-                        clientX: clientX,
-                        clientY: clientY
-                    });
-                    
-                    captchaImg.dispatchEvent(clickEvent);
-                    
-                    logger.info(`点击点选验证码位置: (${point.x}, ${point.y})`);
-                    
-                    // 如果点击完所有点后需要提交，可以在这里添加提交逻辑
-                    if (i === points.length - 1 && config.autoSubmit) {
-                        setTimeout(() => {
-                            // 查找提交按钮
-                            const submitButton = findSubmitButton(captchaImg);
-                            if (submitButton) {
-                                submitButton.click();
-                                logger.info('自动点击提交按钮');
-                            }
-                        }, 500);
+                    clientX: x,
+                    clientY: y,
+                    button: 0
+                });
+                return event;
+            };
+            
+            // 模拟人类拖动的时间和路径
+            const totalSteps = Math.max(5, Math.floor(distance / 10));  // 至少5步
+            const stepDelay = config.sliderSpeed; // 每步延迟时间
+            
+            // 开始拖动
+            slider.dispatchEvent(createMouseEvent('mousedown', startX, startY));
+            if (config.debug) console.log('[验证码] 触发鼠标按下事件');
+            
+            // 模拟人类拖动轨迹
+            let currentDistance = 0;
+            let step = 1;
+            
+            const moveInterval = setInterval(() => {
+                if (step <= totalSteps) {
+                    // 使用加速然后减速的模式，更像人类拖动
+                    let progress;
+                    if (step < totalSteps / 3) {
+                        // 加速阶段
+                        progress = step / totalSteps * 1.5;
+                    } else if (step > totalSteps * 2 / 3) {
+                        // 减速阶段
+                        progress = 0.5 + (step / totalSteps) * 0.5;
+                    } else {
+                        // 匀速阶段
+                        progress = step / totalSteps;
                     }
-                }, 300 + Math.random() * 700 + i * 500); // 随机延迟使点击看起来更自然
-            }
-        } catch (error) {
-            logger.error('模拟点击点选验证码时出错:', error);
+                    
+                    // 添加一些随机性
+                    const randomOffset = (Math.random() - 0.5) * 2;
+                    currentDistance = Math.floor(distance * progress);
+                    
+                    // 移动鼠标
+                    const newX = startX + currentDistance;
+                    const newY = startY + randomOffset;
+                    
+                    slider.dispatchEvent(createMouseEvent('mousemove', newX, newY));
+                    
+                    if (config.debug && step % 5 === 0) {
+                        console.log(`[验证码] 拖动进度: ${Math.round(progress * 100)}%`);
+                    }
+                    
+                    step++;
+                } else {
+                    // 结束拖动
+                    clearInterval(moveInterval);
+                    
+                    // 最后一步，确保到达目标位置
+                    const finalX = startX + distance;
+                    slider.dispatchEvent(createMouseEvent('mousemove', finalX, startY));
+                    
+                    // 释放鼠标
+                    setTimeout(() => {
+                        slider.dispatchEvent(createMouseEvent('mouseup', finalX, startY));
+                        
+                        if (config.debug) console.log('[验证码] 滑块拖动完成');
+                        
+                        // 尝试触发额外的事件
+                        try {
+                            // 有些验证码需要触发额外事件
+                            slider.dispatchEvent(new Event('dragend', { bubbles: true }));
+                            slider.dispatchEvent(new Event('drop', { bubbles: true }));
+                        } catch (e) {
+                            // 忽略错误
+                        }
+                    }, stepDelay);
+                }
+            }, stepDelay);
+        } catch (e) {
+            console.error('[验证码] 模拟滑块拖动时出错:', e);
         }
     }
     
     // 启动脚本
     init();
-
-    // 确保DOMContentLoaded后执行onDOMReady
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', onDOMReady);
-                    } else {
-        // 如果DOMContentLoaded已触发，直接执行
-        onDOMReady();
-    }
 })(); 
