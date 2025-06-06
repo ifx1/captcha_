@@ -2,175 +2,211 @@
 setlocal enabledelayedexpansion
 
 :: 颜色定义
-set "RED=[91m"
 set "GREEN=[92m"
 set "YELLOW=[93m"
 set "BLUE=[94m"
+set "RED=[91m"
 set "NC=[0m"
 
-echo %BLUE%=======================================%NC%
-echo %BLUE%    验证码识别系统一键部署脚本(Windows版)    %NC%
-echo %BLUE%=======================================%NC%
+:: 变量
+set "PYTHON_CMD=python"
+set "PIP_CMD=pip"
+set "VENV_DIR=venv"
+set "LOG_DIR=logs"
+set "CACHE_DIR=cache"
+set "SERVER_FILE=simple_ocr_server.py"
+set "PORT=9898"
+set "LOG_FILE=%LOG_DIR%\ocr_server.log"
+
+:: 标题
+title 验证码识别系统一键部署脚本
+
+:: 主菜单
+echo %BLUE%===== 验证码识别系统一键部署脚本 =====%NC%
 echo.
 
-:: 检查参数
+:: 检查是否是停止命令
 if "%1"=="stop" (
-    echo %YELLOW%正在停止验证码识别服务...%NC%
-    
-    :: 查找并停止服务进程
-    tasklist /FI "IMAGENAME eq python.exe" /FI "WINDOWTITLE eq 验证码识别服务" > temp.txt
-    findstr "python.exe" temp.txt > nul
-    
-    if %ERRORLEVEL% equ 0 (
-        echo 找到服务进程，正在停止...
-        taskkill /F /FI "WINDOWTITLE eq 验证码识别服务" /T
-        echo %GREEN%服务已停止%NC%
-    ) else (
-        :: 尝试用进程名查找
-        taskkill /F /IM python.exe /FI "WINDOWTITLE eq simple_ocr_server.py" /T 2>nul
-        if %ERRORLEVEL% equ 0 (
-            echo %GREEN%服务已停止%NC%
-        ) else (
-            :: 尝试查找可能在虚拟环境中运行的Python进程
-            echo 尝试查找可能在虚拟环境中运行的进程...
-            tasklist | findstr "python" > temp_py.txt
-            for /f "tokens=2" %%i in ('findstr "python" temp_py.txt') do (
-                echo 发现Python进程: %%i
-                taskkill /F /PID %%i /T 2>nul
-                if %ERRORLEVEL% equ 0 (
-                    echo 已停止进程: %%i
-                )
-            )
-            if exist temp_py.txt del /f /q temp_py.txt
-            
-            echo %GREEN%所有可能的服务进程已尝试停止%NC%
-        )
-    )
-    
-    :: 删除临时文件
-    if exist temp.txt del /f /q temp.txt
-    
-    :: 如果虚拟环境处于激活状态，尝试退出
-    if defined VIRTUAL_ENV (
-        echo 检测到活跃的虚拟环境，正在退出...
-        call deactivate 2>nul
-    )
-    
-    echo %GREEN%停止操作完成%NC%
-    pause
-    exit /b 0
+    call :stop_server
+    goto :eof
 )
 
-:: 检查Python是否安装
-echo %YELLOW%检查Python是否安装...%NC%
-python --version >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
-    echo %RED%错误: 未找到Python，请先安装Python%NC%
-    echo 可以从 https://www.python.org/downloads/ 下载安装
-    pause
+:: 检查是否是清理命令
+if "%1"=="cleanup" (
+    call :cleanup_old_files
+    goto :eof
+)
+
+:: 创建必要的目录
+call :create_directories
+
+:: 检查Python
+call :check_python
+
+:: 停止已有服务
+call :stop_server
+
+:: 设置虚拟环境
+call :setup_venv
+
+:: 安装依赖
+call :install_dependencies
+
+:: 清理旧文件
+call :cleanup_old_files
+
+:: 启动服务器
+call :start_server
+
+goto :eof
+
+:: 创建必要的目录
+:create_directories
+echo %BLUE%创建必要的目录...%NC%
+if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
+if not exist "%CACHE_DIR%" mkdir "%CACHE_DIR%"
+if not exist "temp" mkdir "temp"
+echo %GREEN%✓ 目录创建完成%NC%
+goto :eof
+
+:: 检查Python
+:check_python
+echo %BLUE%检查Python环境...%NC%
+where python >nul 2>nul
+if %ERRORLEVEL% neq 0 (
+    echo %RED%错误: 未找到Python，请安装Python 3.6或以上版本%NC%
+    echo 请访问 https://www.python.org/downloads/ 下载安装
     exit /b 1
 )
 
-:: 检查虚拟环境是否存在
-set VENV_DIR=venv
-if not exist %VENV_DIR%\ (
-    echo %YELLOW%未检测到虚拟环境，正在创建...%NC%
-    python -m venv %VENV_DIR% 2>nul
-    if %ERRORLEVEL% NEQ 0 (
-        echo 创建虚拟环境失败，尝试安装virtualenv...
-        pip install virtualenv
-        python -m virtualenv %VENV_DIR% 2>nul
-        if %ERRORLEVEL% NEQ 0 (
-            echo %RED%创建虚拟环境失败，将使用系统Python环境%NC%
-            set USE_VENV=false
+where pip >nul 2>nul
+if %ERRORLEVEL% neq 0 (
+    echo %RED%错误: 未找到pip，请确保Python安装完整%NC%
+    exit /b 1
+)
+
+for /f "tokens=*" %%i in ('python -c "import sys; print('{}.{}'.format(sys.version_info.major, sys.version_info.minor))"') do (
+    set "PYTHON_VERSION=%%i"
+)
+echo %GREEN%✓ 检测到Python版本: %PYTHON_VERSION%%NC%
+goto :eof
+
+:: 停止服务
+:stop_server
+echo %BLUE%正在停止验证码识别服务...%NC%
+
+:: 查找运行在指定端口的进程
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":%PORT%"') do (
+    set "PID=%%a"
+    if not "!PID!"=="" (
+        echo %YELLOW%找到运行在端口 %PORT% 的进程 (PID: !PID!)，正在终止...%NC%
+        taskkill /F /PID !PID! >nul 2>nul
+        if %ERRORLEVEL% equ 0 (
+            echo %GREEN%✓ 服务已成功停止%NC%
         ) else (
-            echo %GREEN%虚拟环境创建成功%NC%
-            set USE_VENV=true
+            echo %RED%警告: 无法停止服务，请手动终止进程 !PID!%NC%
         )
-    ) else (
-        echo %GREEN%虚拟环境创建成功%NC%
-        set USE_VENV=true
+        goto :stop_server_done
+    )
+)
+
+:: 尝试通过python进程查找
+for /f "tokens=2" %%a in ('tasklist /fi "imagename eq python.exe" /fi "windowtitle eq simple_ocr_server.py" /fo list ^| findstr "PID"') do (
+    set "PID=%%a"
+    if not "!PID!"=="" (
+        echo %YELLOW%找到Python服务进程 (PID: !PID!)，正在终止...%NC%
+        taskkill /F /PID !PID! >nul 2>nul
+        if %ERRORLEVEL% equ 0 (
+            echo %GREEN%✓ 服务已成功停止%NC%
+        ) else (
+            echo %RED%警告: 无法停止服务，请手动终止进程 !PID!%NC%
+        )
+        goto :stop_server_done
+    )
+)
+
+echo %YELLOW%未发现运行中的验证码识别服务%NC%
+
+:stop_server_done
+goto :eof
+
+:: 设置虚拟环境
+:setup_venv
+echo %BLUE%设置Python虚拟环境...%NC%
+
+:: 检查虚拟环境是否已存在
+if not exist "%VENV_DIR%\Scripts\activate.bat" (
+    echo %YELLOW%创建新的虚拟环境...%NC%
+    %PYTHON_CMD% -m venv %VENV_DIR%
+    if %ERRORLEVEL% neq 0 (
+        echo %RED%创建虚拟环境失败，尝试使用virtualenv...%NC%
+        %PIP_CMD% install virtualenv
+        virtualenv %VENV_DIR%
     )
 ) else (
-    echo %YELLOW%检测到虚拟环境，将使用现有环境%NC%
-    set USE_VENV=true
+    echo %YELLOW%使用现有虚拟环境%NC%
 )
 
-:: 确保logs目录存在
-if not exist logs mkdir logs
-
-:: 获取当前日期时间作为日志文件名
-for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set "dt=%%a"
-set "LOG_DATE=%dt:~0,8%_%dt:~8,6%"
-set "LOG_FILE=logs\ocr_server_%LOG_DATE%.log"
-
-:: 检查是否已有进程在运行
-tasklist /FI "IMAGENAME eq python.exe" /FI "WINDOWTITLE eq 验证码识别服务" | findstr "python.exe" > nul
-if %ERRORLEVEL% equ 0 (
-    echo %YELLOW%服务已经在运行中，无需重复启动%NC%
-    echo 如需重启，请先运行: %0 stop
-    pause
-    exit /b
-)
-
-:: 如果使用虚拟环境，则激活它并安装依赖
-if "%USE_VENV%"=="true" (
-    echo %YELLOW%激活虚拟环境...%NC%
+:: 激活虚拟环境
+if exist "%VENV_DIR%\Scripts\activate.bat" (
     call %VENV_DIR%\Scripts\activate.bat
-    if %ERRORLEVEL% NEQ 0 (
-        echo %RED%激活虚拟环境失败，将使用系统Python环境%NC%
-        set USE_VENV=false
-    ) else (
-        echo %YELLOW%正在安装所需依赖到虚拟环境...%NC%
-        
-        :: 卸载常规OpenCV并安装无头版本
-        echo 卸载常规OpenCV并安装无头版本...
-        pip uninstall -y opencv-python 2>nul
-        pip install opencv-python-headless
-        
-        :: 安装其他依赖
-        echo 安装其他依赖...
-        pip install ddddocr fastapi uvicorn numpy Pillow
-    )
+    echo %GREEN%✓ 虚拟环境已激活%NC%
 ) else (
-    echo %YELLOW%正在安装所需依赖到系统环境...%NC%
-    
-    :: 卸载常规OpenCV并安装无头版本
-    echo 卸载常规OpenCV并安装无头版本...
-    pip uninstall -y opencv-python 2>nul
-    pip install opencv-python-headless
-    
-    :: 安装其他依赖
-    echo 安装其他依赖...
-    pip install ddddocr fastapi uvicorn numpy Pillow
+    echo %RED%错误: 无法激活虚拟环境%NC%
+    exit /b 1
+)
+goto :eof
+
+:: 安装依赖
+:install_dependencies
+echo %BLUE%安装依赖...%NC%
+
+:: 卸载常规OpenCV并安装无头版本
+%PIP_CMD% uninstall -y opencv-python >nul 2>nul
+%PIP_CMD% install opencv-python-headless ddddocr fastapi uvicorn numpy Pillow
+if %ERRORLEVEL% neq 0 (
+    echo %RED%安装依赖失败，请检查网络连接和Python环境%NC%
+    exit /b 1
 )
 
-:: 后台启动服务
-echo %YELLOW%正在后台启动验证码识别服务...%NC%
-if "%USE_VENV%"=="true" (
-    start "验证码识别服务" /min %VENV_DIR%\Scripts\python simple_ocr_server.py > "%LOG_FILE%" 2>&1
+echo %GREEN%✓ 依赖安装完成%NC%
+goto :eof
+
+:: 清理旧的日志和缓存文件
+:cleanup_old_files
+echo %BLUE%清理旧的日志和缓存文件...%NC%
+
+:: 由于Windows没有类似find命令，我们使用PowerShell
+powershell -Command "Get-ChildItem -Path '%LOG_DIR%' -Filter '*.log.*' | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) } | Remove-Item -Force"
+powershell -Command "Get-ChildItem -Path '%CACHE_DIR%' -Filter '*.json' | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-7) } | Remove-Item -Force"
+
+echo %GREEN%✓ 清理完成%NC%
+goto :eof
+
+:: 启动服务器
+:start_server
+echo %BLUE%启动验证码识别服务...%NC%
+
+:: 确保日志目录存在
+if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
+
+:: 使用start命令在新窗口启动服务器
+start "验证码识别服务" cmd /c "%VENV_DIR%\Scripts\python.exe %SERVER_FILE% > %LOG_FILE% 2>&1"
+
+:: 等待几秒确认服务已启动
+timeout /t 5 > nul
+
+:: 检查服务是否成功启动
+netstat -ano | findstr ":%PORT%" > nul
+if %ERRORLEVEL% equ 0 (
+    echo %GREEN%✓ 验证码识别服务已成功启动%NC%
+    echo %GREEN%✓ 服务地址: http://localhost:%PORT%%NC%
+    echo %GREEN%✓ 日志文件: %LOG_FILE%%NC%
+    echo %YELLOW%提示: 使用 '%~nx0 stop' 命令停止服务%NC%
 ) else (
-    start "验证码识别服务" /min python simple_ocr_server.py > "%LOG_FILE%" 2>&1
+    echo %RED%错误: 服务启动失败，请检查日志: %LOG_FILE%%NC%
+    echo %YELLOW%手动启动尝试: %PYTHON_CMD% %SERVER_FILE%%NC%
 )
+goto :eof
 
-echo %GREEN%服务已成功在后台启动！%NC%
-echo 日志文件: %LOG_FILE%
-echo.
-
-:: 获取本机IP地址
-for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4 Address"') do (
-    set IP=%%a
-    set IP=!IP:~1!
-    goto :got_ip
-)
-:got_ip
-
-echo %BLUE%使用方法:%NC%
-echo 查看日志: type %LOG_FILE%
-echo 停止服务: %0 stop
-echo 服务器地址: http://%IP%:9898
-echo.
-echo %YELLOW%提示: 请确保在油猴脚本中将服务器地址设置为:%NC%
-echo %GREEN%http://%IP%:9898/ocr%NC%
-
-pause 
+endlocal 

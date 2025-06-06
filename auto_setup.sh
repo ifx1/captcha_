@@ -1,178 +1,207 @@
 #!/bin/bash
 
+# 验证码识别系统一键安装和启动脚本
+
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
+YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}=====================================${NC}"
-echo -e "${BLUE}    验证码识别系统一键部署脚本    ${NC}"
-echo -e "${BLUE}=====================================${NC}"
-echo ""
-
-# 检查参数
-if [ "$1" == "stop" ]; then
-    echo -e "${YELLOW}正在停止验证码识别服务...${NC}"
-    
-    # 检查PID文件
-    if [ -f "ocr_server.pid" ]; then
-        PID=$(cat ocr_server.pid)
-        echo "正在停止PID为 $PID 的服务..."
-        kill $PID 2>/dev/null
-        
-        # 等待进程终止
-        sleep 2
-        if ps -p $PID > /dev/null 2>&1; then
-            echo "进程未能正常终止，尝试强制终止..."
-            kill -9 $PID 2>/dev/null
-        fi
-        
-        # 移除PID文件
-        rm ocr_server.pid
-        echo -e "${GREEN}服务已停止${NC}"
-    else
-        # 如果PID文件不存在，尝试查找进程
-        echo "正在查找并停止服务进程..."
-        PIDS=$(ps -ef | grep -E "python.*simple_ocr_server.py" | grep -v grep | awk '{print $2}')
-        
-        if [ -z "$PIDS" ]; then
-            echo -e "${YELLOW}未找到正在运行的服务${NC}"
-            exit 0
-        fi
-        
-        echo "找到以下进程: $PIDS"
-        for pid in $PIDS; do
-            echo "正在停止PID为 $pid 的进程..."
-            kill $pid
-            
-            # 等待进程终止
-            sleep 1
-            if ps -p $pid > /dev/null 2>&1; then
-                echo "进程未能正常终止，尝试强制终止..."
-                kill -9 $pid 2>/dev/null
-            fi
-        done
-        
-        echo -e "${GREEN}服务已停止${NC}"
-    fi
-    
-    # 清理可能存在的虚拟环境激活状态
-    if [ -n "$VIRTUAL_ENV" ]; then
-        echo "检测到活跃的虚拟环境，正在退出..."
-        deactivate 2>/dev/null
-    fi
-    
-    exit 0
-fi
-
-# 检查Python是否安装
-if ! command -v python3 &> /dev/null; then
-    echo -e "${RED}错误: 未找到Python3，请先安装Python3${NC}"
-    echo "Ubuntu/Debian: sudo apt install python3 python3-pip python3-venv"
-    echo "CentOS/RHEL: sudo yum install python3 python3-pip"
-    exit 1
-fi
-
-# 安装系统依赖（如果有root权限）
-if [ "$(id -u)" = "0" ]; then
-    echo -e "${YELLOW}检测到root权限，安装系统依赖...${NC}"
-    apt-get update -qq && apt-get install -y --no-install-recommends \
-        libgl1-mesa-glx libglib2.0-0 libsm6 libxrender1 libxext6 \
-        > /dev/null 2>&1 || echo -e "${RED}系统依赖安装失败，可能影响服务运行${NC}"
-else
-    echo -e "${YELLOW}提示: 以非root用户运行，无法安装系统依赖${NC}"
-    echo "如需安装系统依赖，请使用: sudo apt-get install -y libgl1-mesa-glx libglib2.0-0 libsm6 libxrender1 libxext6"
-fi
-
-# 检查虚拟环境是否存在
+# 变量
+PYTHON_CMD="python3"
+PIP_CMD="pip3"
 VENV_DIR="venv"
-if [ ! -d "$VENV_DIR" ]; then
-    echo -e "${YELLOW}未检测到虚拟环境，正在创建...${NC}"
-    python3 -m venv $VENV_DIR || { 
-        echo "创建虚拟环境失败，尝试安装venv模块..."; 
-        pip3 install virtualenv; 
-        python3 -m virtualenv $VENV_DIR || { 
-            echo -e "${RED}创建虚拟环境失败，将使用系统Python环境${NC}"; 
-            USE_VENV=false; 
-        }
-    }
-    echo -e "${GREEN}虚拟环境创建成功${NC}"
-    USE_VENV=true
-else
-    echo -e "${YELLOW}检测到虚拟环境，将使用现有环境${NC}"
-    USE_VENV=true
-fi
+LOG_DIR="logs"
+CACHE_DIR="cache"
+SERVER_FILE="simple_ocr_server.py"
+PORT=9898
+STOP_COMMAND="$1"
+LOG_FILE="$LOG_DIR/ocr_server.log"
 
-# 确保logs目录存在
-mkdir -p logs
+# 创建必要的目录
+create_directories() {
+    echo -e "${BLUE}创建必要的目录...${NC}"
+    mkdir -p "$LOG_DIR"
+    mkdir -p "$CACHE_DIR"
+    mkdir -p "temp"
+    echo -e "${GREEN}✓ 目录创建完成${NC}"
+}
 
-# 获取当前日期时间作为日志文件名
-LOG_DATE=$(date +"%Y%m%d_%H%M%S")
-LOG_FILE="logs/ocr_server_${LOG_DATE}.log"
-
-# 检查是否已有进程在运行
-ps -ef | grep "simple_ocr_server.py" | grep -v grep > /dev/null
-if [ $? -eq 0 ]; then
-    echo -e "${YELLOW}服务已经在运行中，无需重复启动${NC}"
-    echo "如需重启，请先运行: $0 stop"
-    exit 0
-fi
-
-# 如果使用虚拟环境，则激活它并安装依赖
-if [ "$USE_VENV" = true ]; then
-    echo -e "${YELLOW}激活虚拟环境...${NC}"
-    source $VENV_DIR/bin/activate || { 
-        echo -e "${RED}激活虚拟环境失败，将使用系统Python环境${NC}"; 
-        USE_VENV=false; 
-    }
-    
-    if [ "$USE_VENV" = true ]; then
-        echo -e "${YELLOW}正在安装所需依赖到虚拟环境...${NC}"
-        
-        # 卸载常规OpenCV并安装无头版本
-        echo "卸载常规OpenCV并安装无头版本..."
-        pip uninstall -y opencv-python 2>/dev/null
-        pip install opencv-python-headless
-        
-        # 安装其他依赖
-        echo "安装其他依赖..."
-        pip install ddddocr fastapi uvicorn numpy Pillow
+# 检查Python和pip是否可用
+check_python() {
+    if ! command -v $PYTHON_CMD &> /dev/null; then
+        echo -e "${RED}错误: 未找到Python3，请安装Python 3.6或以上版本${NC}"
+        exit 1
     fi
-else
-    echo -e "${YELLOW}正在安装所需依赖到系统环境...${NC}"
+
+    if ! command -v $PIP_CMD &> /dev/null; then
+        echo -e "${RED}错误: 未找到pip3，请安装pip${NC}"
+        exit 1
+    fi
+
+    PYTHON_VERSION=$($PYTHON_CMD -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
+    echo -e "${GREEN}✓ 检测到Python版本: $PYTHON_VERSION${NC}"
+}
+
+# 停止运行的服务
+stop_server() {
+    echo -e "${BLUE}正在停止验证码识别服务...${NC}"
     
-    # 卸载常规OpenCV并安装无头版本
-    echo "卸载常规OpenCV并安装无头版本..."
-    pip3 uninstall -y opencv-python 2>/dev/null
-    pip3 install opencv-python-headless
+    # 查找运行在指定端口的进程
+    PID=$(lsof -t -i:$PORT 2>/dev/null)
     
-    # 安装其他依赖
-    echo "安装其他依赖..."
-    pip3 install ddddocr fastapi uvicorn numpy Pillow
-fi
+    if [ -n "$PID" ]; then
+        echo -e "${YELLOW}找到运行在端口 $PORT 的进程 (PID: $PID)，正在终止...${NC}"
+        kill -15 $PID 2>/dev/null || kill -9 $PID 2>/dev/null
+        sleep 1
+        
+        # 确认进程已终止
+        if ! lsof -t -i:$PORT &>/dev/null; then
+            echo -e "${GREEN}✓ 服务已成功停止${NC}"
+        else
+            echo -e "${RED}警告: 无法完全停止服务，请手动终止进程 $PID${NC}"
+        fi
+    else
+        echo -e "${YELLOW}未发现运行中的验证码识别服务${NC}"
+    fi
+}
 
-# 后台启动服务
-echo -e "${YELLOW}正在后台启动验证码识别服务...${NC}"
-if [ "$USE_VENV" = true ]; then
-    nohup $VENV_DIR/bin/python simple_ocr_server.py > "$LOG_FILE" 2>&1 &
-else
-    nohup python3 simple_ocr_server.py > "$LOG_FILE" 2>&1 &
-fi
+# 设置虚拟环境
+setup_venv() {
+    echo -e "${BLUE}设置Python虚拟环境...${NC}"
+    
+    # 检查虚拟环境是否已存在
+    if [ ! -d "$VENV_DIR" ]; then
+        echo -e "${YELLOW}创建新的虚拟环境...${NC}"
+        $PYTHON_CMD -m venv $VENV_DIR || { 
+            echo -e "${RED}创建虚拟环境失败，尝试使用virtualenv...${NC}"
+            $PIP_CMD install virtualenv
+            virtualenv $VENV_DIR
+        }
+    else
+        echo -e "${YELLOW}使用现有虚拟环境${NC}"
+    fi
+    
+    # 激活虚拟环境
+    if [ -f "$VENV_DIR/bin/activate" ]; then
+        source $VENV_DIR/bin/activate
+        echo -e "${GREEN}✓ 虚拟环境已激活${NC}"
+    else
+        echo -e "${RED}错误: 无法激活虚拟环境${NC}"
+        exit 1
+    fi
+}
 
-# 保存PID
-echo $! > ocr_server.pid
-PID=$!
+# 安装依赖
+install_dependencies() {
+    echo -e "${BLUE}安装依赖...${NC}"
+    
+    # 尝试安装无头版OpenCV
+    $PIP_CMD install opencv-python-headless ddddocr fastapi uvicorn numpy Pillow || {
+        echo -e "${YELLOW}安装失败，尝试修复依赖问题...${NC}"
+        
+        # 检测系统类型并安装所需系统依赖
+        if [ -f /etc/debian_version ]; then
+            # Debian/Ubuntu
+            echo -e "${YELLOW}检测到Debian/Ubuntu系统，安装系统依赖...${NC}"
+            sudo apt-get update
+            sudo apt-get install -y libgl1-mesa-glx libglib2.0-0 libsm6 libxrender1 libxext6
+        elif [ -f /etc/redhat-release ]; then
+            # RHEL/CentOS
+            echo -e "${YELLOW}检测到RHEL/CentOS系统，安装系统依赖...${NC}"
+            sudo yum install -y mesa-libGL glib2 libSM libXrender libXext
+        elif [ -f /etc/arch-release ]; then
+            # Arch Linux
+            echo -e "${YELLOW}检测到Arch Linux系统，安装系统依赖...${NC}"
+            sudo pacman -Sy --noconfirm mesa glib2 libsm libxrender libxext
+        else
+            echo -e "${YELLOW}无法检测系统类型，尝试通用安装方式${NC}"
+        fi
+        
+        # 再次尝试安装依赖
+        $PIP_CMD install opencv-python-headless ddddocr fastapi uvicorn numpy Pillow
+    }
+    
+    echo -e "${GREEN}✓ 依赖安装完成${NC}"
+}
 
-echo -e "${GREEN}服务已成功在后台启动！${NC}"
-echo "PID: $PID"
-echo "日志文件: $LOG_FILE"
-echo ""
-echo -e "${BLUE}使用方法:${NC}"
-echo "查看日志: tail -f $LOG_FILE"
-echo "停止服务: $0 stop"
-echo "服务器地址: http://$(hostname -I | awk '{print $1}'):9898"
-echo ""
-echo -e "${YELLOW}提示: 请确保在油猴脚本中将服务器地址设置为:${NC}"
-echo -e "${GREEN}http://$(hostname -I | awk '{print $1}'):9898/ocr${NC}" 
+# 启动服务器
+start_server() {
+    echo -e "${BLUE}启动验证码识别服务...${NC}"
+    
+    # 确保日志目录存在
+    mkdir -p "$LOG_DIR"
+    
+    # 后台运行服务器
+    nohup $PYTHON_CMD $SERVER_FILE > "$LOG_FILE" 2>&1 &
+    SERVER_PID=$!
+    
+    # 等待几秒确认服务已启动
+    sleep 3
+    
+    if ps -p $SERVER_PID > /dev/null; then
+        echo -e "${GREEN}✓ 验证码识别服务已成功启动 (PID: $SERVER_PID)${NC}"
+        echo -e "${GREEN}✓ 服务地址: http://localhost:$PORT${NC}"
+        echo -e "${GREEN}✓ 日志文件: $LOG_FILE${NC}"
+        echo -e "${YELLOW}提示: 使用 '$0 stop' 命令停止服务${NC}"
+    else
+        echo -e "${RED}错误: 服务启动失败，请检查日志: $LOG_FILE${NC}"
+        echo -e "${YELLOW}手动启动尝试: $PYTHON_CMD $SERVER_FILE${NC}"
+    fi
+}
+
+# 清理旧的日志和缓存文件
+cleanup_old_files() {
+    echo -e "${BLUE}清理旧的日志和缓存文件...${NC}"
+    
+    # 删除超过30天的日志文件
+    find "$LOG_DIR" -name "*.log.*" -type f -mtime +30 -delete 2>/dev/null
+    
+    # 删除超过7天的缓存文件
+    find "$CACHE_DIR" -name "*.json" -type f -mtime +7 -delete 2>/dev/null
+    
+    echo -e "${GREEN}✓ 清理完成${NC}"
+}
+
+# 主函数
+main() {
+    echo -e "${BLUE}===== 验证码识别系统一键部署脚本 =====${NC}"
+    
+    # 如果是停止命令
+    if [ "$STOP_COMMAND" = "stop" ]; then
+        stop_server
+        exit 0
+    fi
+    
+    # 如果是清理命令
+    if [ "$STOP_COMMAND" = "cleanup" ]; then
+        cleanup_old_files
+        exit 0
+    fi
+    
+    # 创建必要的目录
+    create_directories
+    
+    # 检查Python
+    check_python
+    
+    # 停止已有服务
+    stop_server
+    
+    # 设置虚拟环境
+    setup_venv
+    
+    # 安装依赖
+    install_dependencies
+    
+    # 清理旧文件
+    cleanup_old_files
+    
+    # 启动服务器
+    start_server
+}
+
+# 执行主函数
+main 
