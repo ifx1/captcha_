@@ -2717,33 +2717,406 @@
     function initUI() {
         if (uiInitialized) return;
         
-        // 添加样式
-        GM_addStyle(uiStyles);
+        console.log('开始初始化UI');
         
-        // 创建图标
+        try {
+            // 添加样式
+            GM_addStyle(uiStyles);
+            console.log('样式已添加');
+            
+            // 创建图标
+            if (config.showIcon) {
+                createStatusIcon();
+                console.log('状态图标已创建');
+            }
+            
+            // 创建设置面板
+            createSettingsPanel();
+            console.log('设置面板已创建');
+            
+            // 创建遮罩层
+            const overlay = document.createElement('div');
+            overlay.className = 'captcha-solver-overlay';
+            document.body.appendChild(overlay);
+            console.log('遮罩层已创建');
+            
+            // 添加菜单命令
+            registerMenuCommands();
+            console.log('菜单命令已注册');
+            
+            // 绑定快捷键
+            if (config.enableKeyboardShortcuts) {
+                bindKeyboardShortcuts();
+                console.log('键盘快捷键已绑定');
+            }
+            
+            // 绑定设置面板事件
+            bindSettingsPanelEvents();
+            console.log('设置面板事件已绑定');
+            
+            uiInitialized = true;
+            console.log('UI初始化完成');
+            
+            alert('验证码识别工具UI已加载');
+        } catch (error) {
+            console.error('UI初始化出错:', error);
+            alert('验证码识别工具UI加载失败: ' + error.message);
+        }
+    }
+    
+    // 创建设置面板
+    function createSettingsPanel() {
+        const panel = document.createElement('div');
+        panel.className = 'captcha-solver-panel';
+        if (config.darkMode) {
+            panel.classList.add('captcha-solver-dark-mode');
+        }
+        
+        panel.innerHTML = `
+            <div class="captcha-solver-panel-header">
+                <h3 class="captcha-solver-panel-title">验证码识别工具设置</h3>
+                <button class="captcha-solver-panel-close">&times;</button>
+            </div>
+            <div class="captcha-solver-panel-content">
+                <div class="captcha-solver-tabs">
+                    <div class="captcha-solver-tab active" data-tab="general">常规设置</div>
+                    <div class="captcha-solver-tab" data-tab="advanced">高级设置</div>
+                    <div class="captcha-solver-tab" data-tab="captcha">验证码设置</div>
+                    <div class="captcha-solver-tab" data-tab="stats">统计信息</div>
+                </div>
+                
+                <div class="captcha-solver-tab-content active" data-tab="general">
+                    <div class="captcha-solver-form-group">
+                        <label for="captcha-solver-server">OCR服务器地址:</label>
+                        <input type="text" id="captcha-solver-server" value="${OCR_SERVER}">
+                    </div>
+                    <div class="captcha-solver-form-group">
+                        <label for="captcha-solver-slide-server">滑块服务器地址:</label>
+                        <input type="text" id="captcha-solver-slide-server" value="${SLIDE_SERVER}">
+                    </div>
+                    <div class="captcha-solver-form-group">
+                        <label>
+                            <input type="checkbox" id="captcha-solver-auto-mode" ${config.autoMode ? 'checked' : ''}>
+                            自动识别验证码
+                        </label>
+                    </div>
+                    <div class="captcha-solver-form-group">
+                        <label>
+                            <input type="checkbox" id="captcha-solver-show-notifications" ${config.showNotifications ? 'checked' : ''}>
+                            显示通知
+                        </label>
+                    </div>
+                    <div class="captcha-solver-form-group">
+                        <label>
+                            <input type="checkbox" id="captcha-solver-show-icon" ${config.showIcon ? 'checked' : ''}>
+                            显示状态图标
+                        </label>
+                    </div>
+                    <div class="captcha-solver-form-group">
+                        <label>
+                            <input type="checkbox" id="captcha-solver-dark-mode" ${config.darkMode ? 'checked' : ''}>
+                            暗黑模式
+                        </label>
+                    </div>
+                    <div class="captcha-solver-form-group">
+                        <label for="captcha-solver-icon-position">图标位置:</label>
+                        <select id="captcha-solver-icon-position">
+                            <option value="top-right" ${config.iconPosition === 'top-right' ? 'selected' : ''}>右上角</option>
+                            <option value="top-left" ${config.iconPosition === 'top-left' ? 'selected' : ''}>左上角</option>
+                            <option value="bottom-right" ${config.iconPosition === 'bottom-right' ? 'selected' : ''}>右下角</option>
+                            <option value="bottom-left" ${config.iconPosition === 'bottom-left' ? 'selected' : ''}>左下角</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="captcha-solver-tab-content" data-tab="advanced">
+                    <div class="captcha-solver-form-group">
+                        <label for="captcha-solver-check-interval">检查间隔(毫秒):</label>
+                        <input type="number" id="captcha-solver-check-interval" value="${config.checkInterval}" min="500" step="100">
+                    </div>
+                    <div class="captcha-solver-form-group">
+                        <label for="captcha-solver-console-log-level">日志级别:</label>
+                        <select id="captcha-solver-console-log-level">
+                            <option value="debug" ${config.consoleLogLevel === 'debug' ? 'selected' : ''}>调试</option>
+                            <option value="info" ${config.consoleLogLevel === 'info' ? 'selected' : ''}>信息</option>
+                            <option value="warn" ${config.consoleLogLevel === 'warn' ? 'selected' : ''}>警告</option>
+                            <option value="error" ${config.consoleLogLevel === 'error' ? 'selected' : ''}>错误</option>
+                            <option value="none" ${config.consoleLogLevel === 'none' ? 'selected' : ''}>无</option>
+                        </select>
+                    </div>
+                    <div class="captcha-solver-form-group">
+                        <label>
+                            <input type="checkbox" id="captcha-solver-persistent-cache" ${config.persistentCache ? 'checked' : ''}>
+                            启用持久化缓存
+                        </label>
+                    </div>
+                    <div class="captcha-solver-form-group">
+                        <label for="captcha-solver-cache-size">缓存大小:</label>
+                        <input type="number" id="captcha-solver-cache-size" value="${config.cacheSize}" min="10" step="10">
+                    </div>
+                    <div class="captcha-solver-form-group">
+                        <label>
+                            <input type="checkbox" id="captcha-solver-enable-shortcuts" ${config.enableKeyboardShortcuts ? 'checked' : ''}>
+                            启用键盘快捷键
+                        </label>
+                    </div>
+                    <div class="captcha-solver-form-group">
+                        <label>
+                            <input type="checkbox" id="captcha-solver-auto-submit" ${config.autoSubmit ? 'checked' : ''}>
+                            自动提交表单
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="captcha-solver-tab-content" data-tab="captcha">
+                    <div class="captcha-solver-form-group">
+                        <label>
+                            <input type="checkbox" id="captcha-solver-normal-captcha" ${config.captchaTypes.normal ? 'checked' : ''}>
+                            普通图形验证码
+                        </label>
+                    </div>
+                    <div class="captcha-solver-form-group">
+                        <label>
+                            <input type="checkbox" id="captcha-solver-slider-captcha" ${config.captchaTypes.slider ? 'checked' : ''}>
+                            滑块验证码
+                        </label>
+                    </div>
+                    <div class="captcha-solver-form-group">
+                        <label>
+                            <input type="checkbox" id="captcha-solver-click-captcha" ${config.captchaTypes.clickCaptcha ? 'checked' : ''}>
+                            点选验证码
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="captcha-solver-tab-content" data-tab="stats">
+                    <h4>统计信息</h4>
+                    <table class="captcha-solver-stats-table">
+                        <tr>
+                            <td>总处理验证码:</td>
+                            <td id="captcha-solver-stats-total">${stats.totalCaptchas}</td>
+                        </tr>
+                        <tr>
+                            <td>成功识别:</td>
+                            <td id="captcha-solver-stats-success">${stats.successCount}</td>
+                        </tr>
+                        <tr>
+                            <td>识别失败:</td>
+                            <td id="captcha-solver-stats-fail">${stats.failCount}</td>
+                        </tr>
+                        <tr>
+                            <td>平均识别时间:</td>
+                            <td id="captcha-solver-stats-avg-time">${stats.avgTime.toFixed(2)} ms</td>
+                        </tr>
+                        <tr>
+                            <td>上次重置:</td>
+                            <td id="captcha-solver-stats-last-reset">${new Date(stats.lastReset).toLocaleString()}</td>
+                        </tr>
+                    </table>
+                    <div class="captcha-solver-button-group">
+                        <button class="captcha-solver-button danger" id="captcha-solver-reset-stats">重置统计</button>
+                    </div>
+                </div>
+                
+                <div class="captcha-solver-button-group">
+                    <button class="captcha-solver-button secondary" id="captcha-solver-cancel">取消</button>
+                    <button class="captcha-solver-button danger" id="captcha-solver-reset">重置设置</button>
+                    <button class="captcha-solver-button primary" id="captcha-solver-save">保存设置</button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(panel);
+        return panel;
+    }
+    
+    // 绑定设置面板事件
+    function bindSettingsPanelEvents() {
+        // 绑定标签页切换
+        const tabs = document.querySelectorAll('.captcha-solver-tab');
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                const tabName = tab.getAttribute('data-tab');
+                
+                // 移除所有激活状态
+                document.querySelectorAll('.captcha-solver-tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.captcha-solver-tab-content').forEach(c => c.classList.remove('active'));
+                
+                // 激活当前标签
+                tab.classList.add('active');
+                document.querySelector(`.captcha-solver-tab-content[data-tab="${tabName}"]`).classList.add('active');
+            });
+        });
+        
+        // 绑定关闭按钮
+        const closeButton = document.querySelector('.captcha-solver-panel-close');
+        if (closeButton) {
+            closeButton.addEventListener('click', toggleSettingsPanel);
+        }
+        
+        // 绑定取消按钮
+        const cancelButton = document.getElementById('captcha-solver-cancel');
+        if (cancelButton) {
+            cancelButton.addEventListener('click', toggleSettingsPanel);
+        }
+        
+        // 绑定保存按钮
+        const saveButton = document.getElementById('captcha-solver-save');
+        if (saveButton) {
+            saveButton.addEventListener('click', saveSettings);
+        }
+        
+        // 绑定重置按钮
+        const resetButton = document.getElementById('captcha-solver-reset');
+        if (resetButton) {
+            resetButton.addEventListener('click', resetSettings);
+        }
+        
+        // 绑定重置统计按钮
+        const resetStatsButton = document.getElementById('captcha-solver-reset-stats');
+        if (resetStatsButton) {
+            resetStatsButton.addEventListener('click', () => {
+                resetStats();
+                updateStatsDisplay();
+            });
+        }
+        
+        // 绑定遮罩层点击事件
+        const overlay = document.querySelector('.captcha-solver-overlay');
+        if (overlay) {
+            overlay.addEventListener('click', toggleSettingsPanel);
+        }
+    }
+    
+    // 保存设置
+    function saveSettings() {
+        // 从表单获取值
+        config.autoMode = document.getElementById('captcha-solver-auto-mode').checked;
+        config.showNotifications = document.getElementById('captcha-solver-show-notifications').checked;
+        config.showIcon = document.getElementById('captcha-solver-show-icon').checked;
+        config.darkMode = document.getElementById('captcha-solver-dark-mode').checked;
+        config.iconPosition = document.getElementById('captcha-solver-icon-position').value;
+        config.checkInterval = parseInt(document.getElementById('captcha-solver-check-interval').value);
+        config.consoleLogLevel = document.getElementById('captcha-solver-console-log-level').value;
+        config.persistentCache = document.getElementById('captcha-solver-persistent-cache').checked;
+        config.cacheSize = parseInt(document.getElementById('captcha-solver-cache-size').value);
+        config.enableKeyboardShortcuts = document.getElementById('captcha-solver-enable-shortcuts').checked;
+        config.autoSubmit = document.getElementById('captcha-solver-auto-submit').checked;
+        config.captchaTypes.normal = document.getElementById('captcha-solver-normal-captcha').checked;
+        config.captchaTypes.slider = document.getElementById('captcha-solver-slider-captcha').checked;
+        config.captchaTypes.clickCaptcha = document.getElementById('captcha-solver-click-captcha').checked;
+        
+        // 获取服务器地址
+        const newOcrServer = document.getElementById('captcha-solver-server').value;
+        const newSlideServer = document.getElementById('captcha-solver-slide-server').value;
+        
+        // 更新服务器地址
+        if (newOcrServer !== OCR_SERVER) {
+            GM_setValue('ocr_server', newOcrServer);
+        }
+        
+        if (newSlideServer !== SLIDE_SERVER) {
+            GM_setValue('slide_server', newSlideServer);
+        }
+        
+        // 保存配置
+        saveConfig();
+        
+        // 更新UI
+        updateUI();
+        
+        // 关闭设置面板
+        toggleSettingsPanel();
+        
+        // 显示通知
+        showNotification('设置已保存', '验证码识别工具设置已更新', 'success');
+    }
+    
+    // 重置设置
+    function resetSettings() {
+        if (confirm('确定要重置所有设置到默认值吗？')) {
+            config = Object.assign({}, defaultConfig);
+            saveConfig();
+            updateUI();
+            toggleSettingsPanel();
+            showNotification('设置已重置', '验证码识别工具设置已重置为默认值', 'info');
+        }
+    }
+    
+    // 更新UI
+    function updateUI() {
+        // 更新图标
+        const iconElement = document.querySelector('.captcha-solver-icon');
+        if (iconElement) {
+            document.body.removeChild(iconElement);
+        }
+        
         if (config.showIcon) {
             createStatusIcon();
         }
         
-        // 创建设置面板
-        createSettingsPanel();
-        
-        // 创建遮罩层
-        const overlay = document.createElement('div');
-        overlay.className = 'captcha-solver-overlay';
-        document.body.appendChild(overlay);
-        
-        // 添加菜单命令
-        registerMenuCommands();
-        
-        // 绑定快捷键
-        if (config.enableKeyboardShortcuts) {
-            bindKeyboardShortcuts();
+        // 更新设置面板
+        const panel = document.querySelector('.captcha-solver-panel');
+        if (panel) {
+            panel.className = 'captcha-solver-panel';
+            if (config.darkMode) {
+                panel.classList.add('captcha-solver-dark-mode');
+            }
         }
         
-        uiInitialized = true;
+        // 更新键盘快捷键
+        if (config.enableKeyboardShortcuts) {
+            bindKeyboardShortcuts();
+        } else {
+            unbindKeyboardShortcuts();
+        }
+    }
+    
+    // 切换设置面板显示状态
+    function toggleSettingsPanel() {
+        const panel = document.querySelector('.captcha-solver-panel');
+        const overlay = document.querySelector('.captcha-solver-overlay');
         
-        // 绑定设置面板事件
-        bindSettingsPanelEvents();
+        if (panel.classList.contains('active')) {
+            panel.classList.remove('active');
+            overlay.classList.remove('active');
+        } else {
+            // 更新统计显示
+            updateStatsDisplay();
+            
+            panel.classList.add('active');
+            overlay.classList.add('active');
+        }
+    }
+    
+    // 更新统计显示
+    function updateStatsDisplay() {
+        document.getElementById('captcha-solver-stats-total').textContent = stats.totalCaptchas;
+        document.getElementById('captcha-solver-stats-success').textContent = stats.successCount;
+        document.getElementById('captcha-solver-stats-fail').textContent = stats.failCount;
+        document.getElementById('captcha-solver-stats-avg-time').textContent = `${stats.avgTime.toFixed(2)} ms`;
+        document.getElementById('captcha-solver-stats-last-reset').textContent = new Date(stats.lastReset).toLocaleString();
+    }
+    
+    // 创建状态图标
+    function createStatusIcon() {
+        const iconContainer = document.createElement('div');
+        iconContainer.className = `captcha-solver-ui captcha-solver-icon ${config.iconPosition} ${!isEnabled ? 'disabled' : ''}`;
+        iconContainer.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"></path>
+            <path d="M12 9v4l2 2"></path>
+        </svg>`;
+        
+        // 点击图标切换启用状态
+        iconContainer.addEventListener('click', toggleEnabled);
+        
+        // 右键点击图标打开设置
+        iconContainer.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            toggleSettingsPanel();
+        });
+        
+        document.body.appendChild(iconContainer);
+        return iconContainer;
     }
 })(); 
