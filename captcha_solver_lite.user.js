@@ -420,48 +420,17 @@
             observeDOMChanges();
         }
         
-        // 初始化UI
-        if (document.body) {
-            initUI();
+        // 页面加载完成后执行
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', onDOMReady);
         } else {
-            // 如果body尚未加载，等待DOMContentLoaded事件
-            document.addEventListener('DOMContentLoaded', () => {
-                initUI();
-            });
+            // 如果DOMContentLoaded已触发，直接执行
+            onDOMReady();
         }
-    }
-    
-    // 测试服务器连接
-    function testServerConnection() {
-        logger.info('正在测试服务器连接...');
-        
-        GM_xmlhttpRequest({
-            method: 'GET',
-            url: OCR_SERVER.replace('/ocr', '/'),
-            timeout: 5000,
-            onload: function(response) {
-                try {
-                    const result = JSON.parse(response.responseText);
-                    logger.info('服务器连接成功:', result);
-                } catch (e) {
-                    logger.error('服务器响应解析错误:', e);
-                }
-            },
-            onerror: function(error) {
-                logger.error('服务器连接失败:', error);
-                logger.error('请确认服务器地址是否正确，并检查服务器是否已启动');
-            },
-            ontimeout: function() {
-                logger.error('服务器连接超时，请检查服务器是否已启动');
-            }
-        });
     }
     
     // 页面加载完成后执行
     function onDOMReady() {
-        // 初始化UI
-        initUI();
-        
         // 立即检查一次
         setTimeout(() => {
             checkForCaptcha(true);
@@ -494,11 +463,11 @@
                 const now = Date.now();
                 // 频率更低的滑块检查
                 if (now - lastCheckTime >= config.checkInterval * 2) {
-                if (config.forceSliderCheck) {
+                    if (config.forceSliderCheck) {
                         throttledCheckForSliderCaptcha(true);
-                } else {
+                    } else {
                         throttledCheckForSliderCaptcha();
-                }
+                    }
                 }
             }, config.checkInterval * 3);  // 更低的检查频率
         }
@@ -514,6 +483,32 @@
         
         // 监听弹窗出现
         observePopups();
+    }
+    
+    // 测试服务器连接
+    function testServerConnection() {
+        logger.info('正在测试服务器连接...');
+        
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: OCR_SERVER.replace('/ocr', '/'),
+            timeout: 5000,
+            onload: function(response) {
+                try {
+                    const result = JSON.parse(response.responseText);
+                    logger.info('服务器连接成功:', result);
+                } catch (e) {
+                    logger.error('服务器响应解析错误:', e);
+                }
+            },
+            onerror: function(error) {
+                logger.error('服务器连接失败:', error);
+                logger.error('请确认服务器地址是否正确，并检查服务器是否已启动');
+            },
+            ontimeout: function() {
+                logger.error('服务器连接超时，请检查服务器是否已启动');
+            }
+        });
     }
     
     // 监听页面变化，检测新加载的验证码
@@ -806,13 +801,47 @@
         const id = (img.id || '').toLowerCase();
         
         // 检查所有属性是否包含验证码相关关键词
-        const captchaKeywords = ['captcha', 'verify', 'vcode', 'yzm', 'yanzheng', 'code', 'check', 
-                                'authcode', 'seccode', 'validate', 'verification', '验证码', '验证', '校验码'];
+        const captchaKeywords = [
+            'captcha', 'verify', 'vcode', 'yzm', 'yanzheng', 'code', 'check', 
+            'authcode', 'seccode', 'validate', 'verification', '验证码', '验证', '校验码',
+            'security', 'rand', 'refresh', '刷新码', 'verifycode'
+        ];
+        
+        // 检查父元素和祖先元素的类名和ID是否包含关键词
+        let parent = img.parentElement;
+        let parentChecked = false;
+        let depth = 0; // 设置最大深度为3
+        while (parent && depth < 3 && !parentChecked) {
+            const parentClass = (parent.className || '').toLowerCase();
+            const parentId = (parent.id || '').toLowerCase();
+            
+            for (const keyword of captchaKeywords) {
+                if (parentClass.includes(keyword) || parentId.includes(keyword)) {
+                    parentChecked = true;
+                    break;
+                }
+            }
+            parent = parent.parentElement;
+            depth++;
+        }
         
         // 检查图片各种属性
         for (const keyword of captchaKeywords) {
             if (src.includes(keyword) || alt.includes(keyword) || title.includes(keyword) || 
-                className.includes(keyword) || id.includes(keyword)) {
+                className.includes(keyword) || id.includes(keyword) || parentChecked) {
+                
+                // 额外排除已知的非验证码图片
+                if (
+                    src.includes('logo') || 
+                    src.includes('icon') || 
+                    src.includes('avatar') || 
+                    src.includes('header') ||
+                    src.includes('footer') ||
+                    src.includes('banner')
+                ) {
+                    return false;
+                }
+                
                 return true;
             }
         }
@@ -820,16 +849,34 @@
         // 基于图片尺寸判断
         if (img.complete && img.naturalWidth > 0) {
             // 验证码图片通常较小，但不会太小
-            if (img.naturalWidth >= 20 && img.naturalWidth <= 200 &&
+            if (img.naturalWidth >= 40 && img.naturalWidth <= 200 &&
                 img.naturalHeight >= 20 && img.naturalHeight <= 100) {
                 
                 // 排除明显不是验证码的图片
-                if (img.naturalWidth === img.naturalHeight) return false; // 正方形可能是图标
                 if (src.includes('logo') || src.includes('icon')) return false;
                 
                 // 验证码宽高比通常在1:1到5:1之间
                 const ratio = img.naturalWidth / img.naturalHeight;
-                if (ratio >= 1 && ratio <= 5) return true;
+                if (ratio >= 1 && ratio <= 5) {
+                    // 在父元素中检查是否有输入框，这通常是验证码的强力指示器
+                    let hasNearbyInput = false;
+                    let currentNode = img.parentElement;
+                    let searchDepth = 0;
+                    
+                    while (currentNode && searchDepth < 3) {
+                        const inputs = currentNode.querySelectorAll('input[type="text"], input:not([type])');
+                        if (inputs.length > 0) {
+                            hasNearbyInput = true;
+                            break;
+                        }
+                        currentNode = currentNode.parentElement;
+                        searchDepth++;
+                    }
+                    
+                    if (hasNearbyInput) {
+                        return true;
+                    }
+                }
             }
         }
         
@@ -1321,39 +1368,123 @@
                 return cachedData;
             }
             
-            // 创建canvas
-            const canvas = document.createElement('canvas');
-            canvas.width = img.naturalWidth || img.width;
-            canvas.height = img.naturalHeight || img.height;
-            
-            // 在canvas上绘制图片
-            const ctx = canvas.getContext('2d');
-            
-            try {
-                ctx.drawImage(img, 0, 0);
-                const base64Data = canvas.toDataURL('image/png').split(',')[1];
-                
-                // 存入缓存
-                captchaCache.set(cacheKey, base64Data);
-                
-                return base64Data;
-            } catch (e) {
-                logger.error('[验证码] 绘制图片到Canvas失败，可能是跨域问题');
-                
-                // 尝试直接获取src
-                if (img.src && img.src.startsWith('data:image')) {
-                    const directData = img.src.split(',')[1];
-                    captchaCache.set(cacheKey, directData);
-                    return directData;
+            // 对于SVG或者Canvas元素，需要特殊处理
+            if (img.tagName.toLowerCase() === 'canvas') {
+                try {
+                    const base64Data = img.toDataURL('image/png').split(',')[1];
+                    captchaCache.set(cacheKey, base64Data);
+                    return base64Data;
+                } catch (e) {
+                    logger.error('[验证码] 获取Canvas数据失败:', e);
                 }
-                
-                // 通过GM_xmlhttpRequest获取跨域图片
-                const fetchedData = await fetchImage(img.src);
-                if (fetchedData) {
-                    captchaCache.set(cacheKey, fetchedData);
-                }
-                return fetchedData;
             }
+            
+            // 对于img元素
+            if (img.tagName.toLowerCase() === 'img') {
+                // 检查图片是否已加载完成
+                if (!img.complete) {
+                    // 创建一个Promise等待图片加载
+                    await new Promise(resolve => {
+                        const originalSrc = img.src; // 保存原始src
+                        
+                        const loadHandler = () => {
+                            img.removeEventListener('load', loadHandler);
+                            img.removeEventListener('error', errorHandler);
+                            resolve();
+                        };
+                        
+                        const errorHandler = () => {
+                            img.removeEventListener('load', loadHandler);
+                            img.removeEventListener('error', errorHandler);
+                            // 如果加载失败，尝试重新加载
+                            if (img.src === originalSrc) {
+                                // 添加随机参数避免缓存
+                                img.src = originalSrc + (originalSrc.includes('?') ? '&' : '?') + 'nocache=' + Date.now();
+                            }
+                            resolve();
+                        };
+                        
+                        img.addEventListener('load', loadHandler);
+                        img.addEventListener('error', errorHandler);
+                        
+                        // 添加超时处理
+                        setTimeout(() => {
+                            img.removeEventListener('load', loadHandler);
+                            img.removeEventListener('error', errorHandler);
+                            resolve();
+                        }, 3000);
+                    });
+                }
+                
+                // 创建canvas
+                const canvas = document.createElement('canvas');
+                canvas.width = img.naturalWidth || img.width;
+                canvas.height = img.naturalHeight || img.height;
+                
+                // 确保尺寸有效
+                if (canvas.width <= 0 || canvas.height <= 0) {
+                    logger.error('[验证码] 无效的图片尺寸');
+                    return null;
+                }
+                
+                // 在canvas上绘制图片
+                const ctx = canvas.getContext('2d');
+                
+                try {
+                    ctx.drawImage(img, 0, 0);
+                    const base64Data = canvas.toDataURL('image/png').split(',')[1];
+                    
+                    // 存入缓存
+                    captchaCache.set(cacheKey, base64Data);
+                    
+                    return base64Data;
+                } catch (e) {
+                    logger.error('[验证码] 绘制图片到Canvas失败，可能是跨域问题:', e);
+                    
+                    // 尝试直接获取src
+                    if (img.src && img.src.startsWith('data:image')) {
+                        const directData = img.src.split(',')[1];
+                        captchaCache.set(cacheKey, directData);
+                        return directData;
+                    }
+                    
+                    // 通过GM_xmlhttpRequest获取跨域图片
+                    const fetchedData = await fetchImage(img.src);
+                    if (fetchedData) {
+                        captchaCache.set(cacheKey, fetchedData);
+                        return fetchedData;
+                    }
+                    
+                    // 尝试添加crossOrigin属性并重新加载
+                    try {
+                        img.crossOrigin = "anonymous";
+                        img.src = img.src + (img.src.includes('?') ? '&' : '?') + 'nocache=' + Date.now();
+                        
+                        // 等待图片重新加载
+                        await new Promise(resolve => {
+                            const loadHandler = () => {
+                                img.removeEventListener('load', loadHandler);
+                                resolve();
+                            };
+                            
+                            img.addEventListener('load', loadHandler);
+                            
+                            // 添加超时处理
+                            setTimeout(resolve, 3000);
+                        });
+                        
+                        // 再次尝试绘制
+                        ctx.drawImage(img, 0, 0);
+                        const base64Data = canvas.toDataURL('image/png').split(',')[1];
+                        captchaCache.set(cacheKey, base64Data);
+                        return base64Data;
+                    } catch (e2) {
+                        logger.error('[验证码] 重试获取图片失败:', e2);
+                    }
+                }
+            }
+            
+            return null;
         } catch (e) {
             logger.error('[验证码] 获取图片base64失败:', e);
             return null;
@@ -2389,7 +2520,7 @@
     // 确保DOMContentLoaded后执行onDOMReady
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', onDOMReady);
-    } else {
+                    } else {
         // 如果DOMContentLoaded已触发，直接执行
         onDOMReady();
     }
