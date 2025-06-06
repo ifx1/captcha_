@@ -30,19 +30,18 @@ cache_dir.mkdir(exist_ok=True)
 
 # 配置日志
 log_file = log_dir / "ocr_server.log"
+handler_console = logging.StreamHandler()
+handler_console.setLevel(logging.WARNING)
+handler_file = RotatingFileHandler(
+    log_file, 
+    maxBytes=5*1024*1024,  # 5MB
+    backupCount=3          # 保留3个备份
+)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        # 控制台输出日志级别设为WARNING，减少输出
-        logging.StreamHandler().setLevel(logging.WARNING),
-        # 文件日志，使用RotatingFileHandler自动轮转
-        RotatingFileHandler(
-            log_file, 
-            maxBytes=5*1024*1024,  # 5MB
-            backupCount=3          # 保留3个备份
-        )
-    ]
+    handlers=[handler_console, handler_file]
 )
 logger = logging.getLogger(__name__)
 
