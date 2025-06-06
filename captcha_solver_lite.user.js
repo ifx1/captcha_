@@ -459,6 +459,9 @@
     
     // 页面加载完成后执行
     function onDOMReady() {
+        // 初始化UI
+        initUI();
+        
         // 立即检查一次
         setTimeout(() => {
             checkForCaptcha(true);
@@ -2383,6 +2386,333 @@
     // 启动脚本
     init();
 
+    // 确保DOMContentLoaded后执行onDOMReady
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', onDOMReady);
+    } else {
+        // 如果DOMContentLoaded已触发，直接执行
+        onDOMReady();
+    }
+
+    // UI样式定义
+    const uiStyles = `
+    .captcha-solver-ui {
+        font-family: Arial, sans-serif;
+        font-size: 14px;
+        color: #333;
+    }
+
+    .captcha-solver-icon {
+        position: fixed;
+        width: 32px;
+        height: 32px;
+        background-color: rgba(255, 255, 255, 0.9);
+        border-radius: 50%;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        z-index: 9999;
+        transition: all 0.3s ease;
+    }
+
+    .captcha-solver-icon:hover {
+        transform: scale(1.1);
+        box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+    }
+
+    .captcha-solver-icon.top-right {
+        top: 20px;
+        right: 20px;
+    }
+
+    .captcha-solver-icon.top-left {
+        top: 20px;
+        left: 20px;
+    }
+
+    .captcha-solver-icon.bottom-right {
+        bottom: 20px;
+        right: 20px;
+    }
+
+    .captcha-solver-icon.bottom-left {
+        bottom: 20px;
+        left: 20px;
+    }
+
+    .captcha-solver-icon svg {
+        width: 20px;
+        height: 20px;
+        stroke: #4a6cf7;
+    }
+
+    .captcha-solver-icon.disabled svg {
+        stroke: #888;
+    }
+
+    .captcha-solver-panel {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) scale(0.9);
+        width: 500px;
+        max-width: 90%;
+        max-height: 85vh;
+        background-color: #fff;
+        border-radius: 8px;
+        box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
+        z-index: 10000;
+        opacity: 0;
+        visibility: hidden;
+        transition: all 0.3s ease;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .captcha-solver-panel.active {
+        opacity: 1;
+        visibility: visible;
+        transform: translate(-50%, -50%) scale(1);
+    }
+
+    .captcha-solver-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 15px 20px;
+        border-bottom: 1px solid #eee;
+    }
+
+    .captcha-solver-panel-title {
+        margin: 0;
+        font-size: 18px;
+        font-weight: bold;
+        color: #333;
+    }
+
+    .captcha-solver-panel-close {
+        background: none;
+        border: none;
+        font-size: 24px;
+        color: #888;
+        cursor: pointer;
+        padding: 0;
+        margin: 0;
+    }
+
+    .captcha-solver-panel-content {
+        padding: 20px;
+        overflow-y: auto;
+        max-height: calc(85vh - 60px);
+    }
+
+    .captcha-solver-form-group {
+        margin-bottom: 15px;
+    }
+
+    .captcha-solver-form-group label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: 500;
+    }
+
+    .captcha-solver-form-group input[type="text"],
+    .captcha-solver-form-group input[type="number"],
+    .captcha-solver-form-group select,
+    .captcha-solver-form-group textarea {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+    }
+
+    .captcha-solver-form-group textarea {
+        resize: vertical;
+        min-height: 80px;
+    }
+
+    .captcha-solver-tabs {
+        display: flex;
+        border-bottom: 1px solid #eee;
+        margin-bottom: 20px;
+    }
+
+    .captcha-solver-tab {
+        padding: 10px 15px;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        transition: all 0.2s ease;
+    }
+
+    .captcha-solver-tab:hover {
+        background-color: #f5f5f5;
+    }
+
+    .captcha-solver-tab.active {
+        border-bottom-color: #4a6cf7;
+        color: #4a6cf7;
+    }
+
+    .captcha-solver-tab-content {
+        display: none;
+    }
+
+    .captcha-solver-tab-content.active {
+        display: block;
+    }
+
+    .captcha-solver-button-group {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 20px;
+    }
+
+    .captcha-solver-button {
+        padding: 8px 16px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: 500;
+        transition: all 0.2s ease;
+    }
+
+    .captcha-solver-button.primary {
+        background-color: #4a6cf7;
+        color: white;
+    }
+
+    .captcha-solver-button.secondary {
+        background-color: #f5f5f5;
+        color: #333;
+    }
+
+    .captcha-solver-button.danger {
+        background-color: #f44336;
+        color: white;
+    }
+
+    .captcha-solver-button:hover {
+        opacity: 0.9;
+        transform: translateY(-1px);
+    }
+
+    .captcha-solver-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(0, 0, 0, 0.5);
+        z-index: 9999;
+        opacity: 0;
+        visibility: hidden;
+        transition: all 0.3s ease;
+    }
+
+    .captcha-solver-overlay.active {
+        opacity: 1;
+        visibility: visible;
+    }
+
+    .captcha-solver-notification {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        width: 300px;
+        background-color: white;
+        border-radius: 8px;
+        box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+        padding: 15px;
+        z-index: 10001;
+        transform: translateY(20px);
+        opacity: 0;
+        transition: all 0.3s ease;
+        display: none;
+    }
+
+    .captcha-solver-notification.info {
+        border-left: 4px solid #2196f3;
+    }
+
+    .captcha-solver-notification.success {
+        border-left: 4px solid #4caf50;
+    }
+
+    .captcha-solver-notification.warning {
+        border-left: 4px solid #ff9800;
+    }
+
+    .captcha-solver-notification.error {
+        border-left: 4px solid #f44336;
+    }
+
+    .captcha-solver-notification-title {
+        font-weight: bold;
+        margin-bottom: 5px;
+        color: #333;
+    }
+
+    .captcha-solver-notification-content {
+        color: #666;
+        font-size: 13px;
+    }
+
+    /* 暗黑模式 */
+    .captcha-solver-dark-mode {
+        background-color: #222;
+        color: #eee;
+    }
+
+    .captcha-solver-dark-mode .captcha-solver-panel-header {
+        border-bottom-color: #444;
+    }
+
+    .captcha-solver-dark-mode .captcha-solver-panel-title {
+        color: #eee;
+    }
+
+    .captcha-solver-dark-mode .captcha-solver-form-group input[type="text"],
+    .captcha-solver-dark-mode .captcha-solver-form-group input[type="number"],
+    .captcha-solver-dark-mode .captcha-solver-form-group select,
+    .captcha-solver-dark-mode .captcha-solver-form-group textarea {
+        background-color: #333;
+        border-color: #555;
+        color: #eee;
+    }
+
+    .captcha-solver-dark-mode .captcha-solver-tab:hover {
+        background-color: #333;
+    }
+
+    .captcha-solver-dark-mode .captcha-solver-button.secondary {
+        background-color: #444;
+        color: #eee;
+    }
+    
+    /* 数据统计表格 */
+    .captcha-solver-stats-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+    }
+    
+    .captcha-solver-stats-table td,
+    .captcha-solver-stats-table th {
+        padding: 8px 12px;
+        text-align: left;
+        border-bottom: 1px solid #eee;
+    }
+    
+    .captcha-solver-dark-mode .captcha-solver-stats-table td,
+    .captcha-solver-dark-mode .captcha-solver-stats-table th {
+        border-bottom-color: #444;
+    }
+    `;
+    
     // 初始化UI
     function initUI() {
         if (uiInitialized) return;
@@ -2412,563 +2742,8 @@
         }
         
         uiInitialized = true;
-    }
-
-    // 创建状态图标
-    function createStatusIcon() {
-        const iconContainer = document.createElement('div');
-        iconContainer.className = `captcha-solver-ui captcha-solver-icon ${config.iconPosition} ${!isEnabled ? 'disabled' : ''}`;
-        iconContainer.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"></path>
-            <path d="M12 9v4l2 2"></path>
-        </svg>`;
         
-        // 点击图标切换启用状态
-        iconContainer.addEventListener('click', toggleEnabled);
-        
-        // 右键点击图标打开设置
-        iconContainer.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-            toggleSettingsPanel();
-        });
-        
-        document.body.appendChild(iconContainer);
-    }
-
-    // 创建设置面板
-    function createSettingsPanel() {
-        const panel = document.createElement('div');
-        panel.className = 'captcha-solver-panel';
-        if (config.darkMode) {
-            panel.classList.add('captcha-solver-dark-mode');
-        }
-        
-        panel.innerHTML = `
-            <div class="captcha-solver-panel-header">
-                <h3 class="captcha-solver-panel-title">验证码识别工具设置</h3>
-                <button class="captcha-solver-panel-close">&times;</button>
-            </div>
-            <div class="captcha-solver-panel-content">
-                <div class="captcha-solver-tabs">
-                    <div class="captcha-solver-tab active" data-tab="general">常规设置</div>
-                    <div class="captcha-solver-tab" data-tab="advanced">高级设置</div>
-                    <div class="captcha-solver-tab" data-tab="captcha">验证码设置</div>
-                    <div class="captcha-solver-tab" data-tab="stats">统计信息</div>
-                </div>
-                
-                <div class="captcha-solver-tab-content active" data-tab="general">
-                    <div class="captcha-solver-form-group">
-                        <label for="captcha-solver-server">OCR服务器地址:</label>
-                        <input type="text" id="captcha-solver-server" value="${OCR_SERVER}">
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label for="captcha-solver-slide-server">滑块服务器地址:</label>
-                        <input type="text" id="captcha-solver-slide-server" value="${SLIDE_SERVER}">
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label>
-                            <input type="checkbox" id="captcha-solver-auto-mode" ${config.autoMode ? 'checked' : ''}>
-                            自动识别验证码
-                        </label>
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label>
-                            <input type="checkbox" id="captcha-solver-show-notifications" ${config.showNotifications ? 'checked' : ''}>
-                            显示通知
-                        </label>
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label>
-                            <input type="checkbox" id="captcha-solver-show-icon" ${config.showIcon ? 'checked' : ''}>
-                            显示状态图标
-                        </label>
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label>
-                            <input type="checkbox" id="captcha-solver-dark-mode" ${config.darkMode ? 'checked' : ''}>
-                            暗黑模式
-                        </label>
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label for="captcha-solver-icon-position">图标位置:</label>
-                        <select id="captcha-solver-icon-position">
-                            <option value="top-right" ${config.iconPosition === 'top-right' ? 'selected' : ''}>右上角</option>
-                            <option value="top-left" ${config.iconPosition === 'top-left' ? 'selected' : ''}>左上角</option>
-                            <option value="bottom-right" ${config.iconPosition === 'bottom-right' ? 'selected' : ''}>右下角</option>
-                            <option value="bottom-left" ${config.iconPosition === 'bottom-left' ? 'selected' : ''}>左下角</option>
-                        </select>
-                    </div>
-                </div>
-                
-                <div class="captcha-solver-tab-content" data-tab="advanced">
-                    <div class="captcha-solver-form-group">
-                        <label for="captcha-solver-check-interval">检查间隔(毫秒):</label>
-                        <input type="number" id="captcha-solver-check-interval" value="${config.checkInterval}" min="500" step="100">
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label for="captcha-solver-console-log-level">日志级别:</label>
-                        <select id="captcha-solver-console-log-level">
-                            <option value="debug" ${config.consoleLogLevel === 'debug' ? 'selected' : ''}>调试</option>
-                            <option value="info" ${config.consoleLogLevel === 'info' ? 'selected' : ''}>信息</option>
-                            <option value="warn" ${config.consoleLogLevel === 'warn' ? 'selected' : ''}>警告</option>
-                            <option value="error" ${config.consoleLogLevel === 'error' ? 'selected' : ''}>错误</option>
-                            <option value="none" ${config.consoleLogLevel === 'none' ? 'selected' : ''}>无</option>
-                        </select>
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label>
-                            <input type="checkbox" id="captcha-solver-persistent-cache" ${config.persistentCache ? 'checked' : ''}>
-                            启用持久化缓存
-                        </label>
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label for="captcha-solver-cache-size">缓存大小:</label>
-                        <input type="number" id="captcha-solver-cache-size" value="${config.cacheSize}" min="10" step="10">
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label>
-                            <input type="checkbox" id="captcha-solver-enable-shortcuts" ${config.enableKeyboardShortcuts ? 'checked' : ''}>
-                            启用键盘快捷键
-                        </label>
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label>
-                            <input type="checkbox" id="captcha-solver-auto-submit" ${config.autoSubmit ? 'checked' : ''}>
-                            自动提交表单
-                        </label>
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label for="captcha-solver-custom-selectors">自定义验证码选择器(逗号分隔):</label>
-                        <textarea id="captcha-solver-custom-selectors" rows="3">${config.customSelectors}</textarea>
-                    </div>
-                </div>
-                
-                <div class="captcha-solver-tab-content" data-tab="captcha">
-                    <div class="captcha-solver-form-group">
-                        <label>
-                            <input type="checkbox" id="captcha-solver-normal-captcha" ${config.captchaTypes.normal ? 'checked' : ''}>
-                            普通图形验证码
-                        </label>
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label>
-                            <input type="checkbox" id="captcha-solver-slider-captcha" ${config.captchaTypes.slider ? 'checked' : ''}>
-                            滑块验证码
-                        </label>
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label>
-                            <input type="checkbox" id="captcha-solver-click-captcha" ${config.captchaTypes.clickCaptcha ? 'checked' : ''}>
-                            点选验证码
-                        </label>
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label>
-                            <input type="checkbox" id="captcha-solver-rotation-captcha" ${config.captchaTypes.rotationCaptcha ? 'checked' : ''}>
-                            旋转验证码(实验性)
-                        </label>
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label>
-                            <input type="checkbox" id="captcha-solver-jigsaw-captcha" ${config.captchaTypes.jigsaw ? 'checked' : ''}>
-                            拼图验证码
-                        </label>
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label for="captcha-solver-search-depth">搜索深度:</label>
-                        <input type="number" id="captcha-solver-search-depth" value="${config.searchDepth}" min="1" max="10">
-                    </div>
-                    <div class="captcha-solver-form-group">
-                        <label for="captcha-solver-slider-speed">滑块速度:</label>
-                        <input type="number" id="captcha-solver-slider-speed" value="${config.sliderSpeed}" min="5" max="50">
-                    </div>
-                </div>
-                
-                <div class="captcha-solver-tab-content" data-tab="stats">
-                    <div class="captcha-solver-stats">
-                        <div class="captcha-solver-stats-item">
-                            <span class="captcha-solver-stats-label">总处理验证码数:</span>
-                            <span id="captcha-solver-stats-total">${stats.totalCaptchas}</span>
-                        </div>
-                        <div class="captcha-solver-stats-item">
-                            <span class="captcha-solver-stats-label">成功识别数:</span>
-                            <span id="captcha-solver-stats-success">${stats.successCount}</span>
-                        </div>
-                        <div class="captcha-solver-stats-item">
-                            <span class="captcha-solver-stats-label">失败数:</span>
-                            <span id="captcha-solver-stats-fail">${stats.failCount}</span>
-                        </div>
-                        <div class="captcha-solver-stats-item">
-                            <span class="captcha-solver-stats-label">平均识别时间:</span>
-                            <span id="captcha-solver-stats-avg-time">${stats.avgTime.toFixed(2)} ms</span>
-                        </div>
-                        <div class="captcha-solver-stats-item">
-                            <span class="captcha-solver-stats-label">上次重置时间:</span>
-                            <span id="captcha-solver-stats-last-reset">${new Date(stats.lastReset).toLocaleString()}</span>
-                        </div>
-                    </div>
-                    <div style="margin-top: 15px; text-align: center;">
-                        <button id="captcha-solver-reset-stats" class="captcha-solver-btn captcha-solver-btn-secondary">重置统计</button>
-                    </div>
-                </div>
-            </div>
-            <div class="captcha-solver-panel-footer">
-                <button class="captcha-solver-btn captcha-solver-btn-secondary" id="captcha-solver-reset">重置默认设置</button>
-                <button class="captcha-solver-btn captcha-solver-btn-primary" id="captcha-solver-save">保存设置</button>
-            </div>
-        `;
-        
-        document.body.appendChild(panel);
-        
-        // 绑定事件
+        // 绑定设置面板事件
         bindSettingsPanelEvents();
-    }
-
-    // 绑定设置面板事件
-    function bindSettingsPanelEvents() {
-        // 关闭按钮
-        document.querySelector('.captcha-solver-panel-close').addEventListener('click', toggleSettingsPanel);
-        
-        // Tab切换
-        document.querySelectorAll('.captcha-solver-tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                // 切换标签激活状态
-                document.querySelectorAll('.captcha-solver-tab').forEach(t => t.classList.remove('active'));
-                tab.classList.add('active');
-                
-                // 切换内容显示
-                const tabName = tab.getAttribute('data-tab');
-                document.querySelectorAll('.captcha-solver-tab-content').forEach(content => {
-                    content.classList.remove('active');
-                });
-                document.querySelector(`.captcha-solver-tab-content[data-tab="${tabName}"]`).classList.add('active');
-            });
-        });
-        
-        // 保存设置
-        document.getElementById('captcha-solver-save').addEventListener('click', saveSettings);
-        
-        // 重置默认设置
-        document.getElementById('captcha-solver-reset').addEventListener('click', resetSettings);
-        
-        // 重置统计
-        document.getElementById('captcha-solver-reset-stats').addEventListener('click', () => {
-            resetStats();
-            updateStatsDisplay();
-            showNotification('成功', '统计数据已重置', 'success');
-        });
-        
-        // 遮罩层点击关闭设置面板
-        document.querySelector('.captcha-solver-overlay').addEventListener('click', toggleSettingsPanel);
-    }
-
-    // 保存设置
-    function saveSettings() {
-        // 服务器地址
-        const ocrServer = document.getElementById('captcha-solver-server').value;
-        const slideServer = document.getElementById('captcha-solver-slide-server').value;
-        
-        if (ocrServer) GM_setValue('ocr_server', ocrServer);
-        if (slideServer) GM_setValue('slide_server', slideServer);
-        
-        // 更新配置
-        config.autoMode = document.getElementById('captcha-solver-auto-mode').checked;
-        config.showNotifications = document.getElementById('captcha-solver-show-notifications').checked;
-        config.showIcon = document.getElementById('captcha-solver-show-icon').checked;
-        config.darkMode = document.getElementById('captcha-solver-dark-mode').checked;
-        config.iconPosition = document.getElementById('captcha-solver-icon-position').value;
-        config.checkInterval = parseInt(document.getElementById('captcha-solver-check-interval').value);
-        config.consoleLogLevel = document.getElementById('captcha-solver-console-log-level').value;
-        config.persistentCache = document.getElementById('captcha-solver-persistent-cache').checked;
-        config.cacheSize = parseInt(document.getElementById('captcha-solver-cache-size').value);
-        config.enableKeyboardShortcuts = document.getElementById('captcha-solver-enable-shortcuts').checked;
-        config.autoSubmit = document.getElementById('captcha-solver-auto-submit').checked;
-        config.customSelectors = document.getElementById('captcha-solver-custom-selectors').value;
-        config.searchDepth = parseInt(document.getElementById('captcha-solver-search-depth').value);
-        config.sliderSpeed = parseInt(document.getElementById('captcha-solver-slider-speed').value);
-        
-        // 验证码类型
-        config.captchaTypes.normal = document.getElementById('captcha-solver-normal-captcha').checked;
-        config.captchaTypes.slider = document.getElementById('captcha-solver-slider-captcha').checked;
-        config.captchaTypes.clickCaptcha = document.getElementById('captcha-solver-click-captcha').checked;
-        config.captchaTypes.rotationCaptcha = document.getElementById('captcha-solver-rotation-captcha').checked;
-        config.captchaTypes.jigsaw = document.getElementById('captcha-solver-jigsaw-captcha').checked;
-        
-        // 保存配置
-        saveConfig();
-        
-        // 显示通知
-        showNotification('成功', '设置已保存', 'success');
-        
-        // 更新UI
-        updateUI();
-        
-        // 关闭设置面板
-        toggleSettingsPanel();
-    }
-
-    // 重置默认设置
-    function resetSettings() {
-        if (confirm('确定要重置所有设置到默认值吗？统计数据将被保留。')) {
-            config = Object.assign({}, defaultConfig, { statistics: stats });
-            saveConfig();
-            
-            // 刷新设置面板
-            document.body.removeChild(document.querySelector('.captcha-solver-panel'));
-            createSettingsPanel();
-            
-            // 显示通知
-            showNotification('成功', '设置已重置为默认值', 'success');
-            
-            // 更新UI
-            updateUI();
-        }
-    }
-
-    // 更新UI
-    function updateUI() {
-        // 更新图标
-        if (config.showIcon) {
-            const iconElement = document.querySelector('.captcha-solver-icon');
-            if (!iconElement) {
-                createStatusIcon();
-                    } else {
-                // 更新图标位置
-                iconElement.className = `captcha-solver-ui captcha-solver-icon ${config.iconPosition} ${!isEnabled ? 'disabled' : ''}`;
-            }
-        } else {
-            const iconElement = document.querySelector('.captcha-solver-icon');
-            if (iconElement) {
-                iconElement.remove();
-            }
-        }
-        
-        // 更新设置面板
-        const panel = document.querySelector('.captcha-solver-panel');
-        if (panel) {
-            if (config.darkMode) {
-                panel.classList.add('captcha-solver-dark-mode');
-            } else {
-                panel.classList.remove('captcha-solver-dark-mode');
-            }
-        }
-        
-        // 更新键盘快捷键
-        if (config.enableKeyboardShortcuts) {
-            bindKeyboardShortcuts();
-        } else {
-            unbindKeyboardShortcuts();
-        }
-    }
-
-    // 切换设置面板显示状态
-    function toggleSettingsPanel() {
-        const panel = document.querySelector('.captcha-solver-panel');
-        const overlay = document.querySelector('.captcha-solver-overlay');
-        
-        if (panel.classList.contains('active')) {
-            panel.classList.remove('active');
-            overlay.classList.remove('active');
-        } else {
-            // 更新统计显示
-            updateStatsDisplay();
-            
-            panel.classList.add('active');
-            overlay.classList.add('active');
-        }
-    }
-
-    // 更新统计显示
-    function updateStatsDisplay() {
-        document.getElementById('captcha-solver-stats-total').textContent = stats.totalCaptchas;
-        document.getElementById('captcha-solver-stats-success').textContent = stats.successCount;
-        document.getElementById('captcha-solver-stats-fail').textContent = stats.failCount;
-        document.getElementById('captcha-solver-stats-avg-time').textContent = `${stats.avgTime.toFixed(2)} ms`;
-        document.getElementById('captcha-solver-stats-last-reset').textContent = new Date(stats.lastReset).toLocaleString();
-    }
-
-    // 切换启用状态
-    function toggleEnabled() {
-        isEnabled = !isEnabled;
-        GM_setValue('isEnabled', isEnabled);
-        
-        // 更新图标状态
-        const iconElement = document.querySelector('.captcha-solver-icon');
-        if (iconElement) {
-            if (isEnabled) {
-                iconElement.classList.remove('disabled');
-                } else {
-                iconElement.classList.add('disabled');
-            }
-        }
-        
-        // 显示通知
-        showNotification(
-            isEnabled ? '已启用' : '已禁用', 
-            isEnabled ? '验证码识别服务已启用' : '验证码识别服务已禁用', 
-            isEnabled ? 'success' : 'info'
-        );
-    }
-
-    // 显示通知
-    function showNotification(title, message, type = 'info') {
-        if (!config.showNotifications) return;
-        
-        // 创建通知元素
-        const notification = document.createElement('div');
-        notification.className = `captcha-solver-notification ${type}`;
-        notification.innerHTML = `
-            <div class="captcha-solver-notification-title">${title}</div>
-            <div class="captcha-solver-notification-content">${message}</div>
-        `;
-        
-        // 添加到页面
-        document.body.appendChild(notification);
-        
-        // 显示通知
-                    setTimeout(() => {
-            notification.style.display = 'block';
-        }, 100);
-        
-        // 自动关闭
-        setTimeout(() => {
-            notification.style.opacity = '0';
-            notification.style.transform = 'translateY(20px)';
-            setTimeout(() => {
-                if (notification.parentNode) {
-                    document.body.removeChild(notification);
-                }
-            }, 300);
-        }, 3000);
-    }
-
-    // 注册菜单命令
-    function registerMenuCommands() {
-        GM_registerMenuCommand('打开设置', toggleSettingsPanel);
-        GM_registerMenuCommand(isEnabled ? '禁用验证码识别' : '启用验证码识别', toggleEnabled);
-        GM_registerMenuCommand('强制扫描验证码', () => {
-            if (isEnabled) {
-                checkForCaptcha(true);
-                if (config.captchaTypes.slider) {
-                    checkForSliderCaptcha(true);
-                }
-                showNotification('扫描', '已强制扫描验证码', 'info');
-            } else {
-                showNotification('错误', '验证码识别服务已禁用', 'error');
-            }
-        });
-    }
-
-    // 绑定键盘快捷键
-    function bindKeyboardShortcuts() {
-        if (!config.enableKeyboardShortcuts) return;
-        
-        document.addEventListener('keydown', handleKeyboardShortcut);
-    }
-
-    // 解绑键盘快捷键
-    function unbindKeyboardShortcuts() {
-        document.removeEventListener('keydown', handleKeyboardShortcut);
-    }
-
-    // 处理键盘快捷键
-    function handleKeyboardShortcut(e) {
-        // Alt+C: 切换启用/禁用状态
-        if (e.altKey && e.key === 'c') {
-            toggleEnabled();
-        }
-        
-        // Alt+S: 强制扫描验证码
-        if (e.altKey && e.key === 's') {
-            if (isEnabled) {
-                checkForCaptcha(true);
-                if (config.captchaTypes.slider) {
-                    checkForSliderCaptcha(true);
-                }
-                showNotification('扫描', '已强制扫描验证码', 'info');
-            } else {
-                showNotification('错误', '验证码识别服务已禁用', 'error');
-            }
-        }
-        
-        // Alt+O: 打开设置
-        if (e.altKey && e.key === 'o') {
-            toggleSettingsPanel();
-        }
-        
-        // Alt+I: 切换图标显示
-        if (e.altKey && e.key === 'i') {
-            config.showIcon = !config.showIcon;
-            saveConfig();
-            updateUI();
-        }
-    }
-
-    // 监听DOM变化
-    function observeDOMChanges() {
-        // 使用MutationObserver监听DOM变化
-        const observer = new MutationObserver(
-            // 使用节流函数减少频繁调用
-            throttle((mutations) => {
-                // 检查是否有相关元素变化
-                let shouldCheckCaptcha = false;
-                let shouldCheckSlider = false;
-                let shouldCheckClickCaptcha = false;
-                
-                for (const mutation of mutations) {
-                    // 如果是属性变化且是src属性，可能是验证码图片更新
-                    if (mutation.type === 'attributes' && 
-                        mutation.attributeName === 'src' && 
-                        mutation.target.tagName === 'IMG') {
-                        shouldCheckCaptcha = true;
-                    }
-                    
-                    // 如果是节点添加，检查是否与验证码相关
-                    if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-                        for (const node of mutation.addedNodes) {
-                            if (node.nodeType === Node.ELEMENT_NODE) {
-                                // 检查是否与验证码相关
-                                if (node.tagName === 'IMG' || 
-                                    node.querySelector('img') || 
-                                    node.className && /captcha|validate|verify/i.test(node.className) ||
-                                    node.id && /captcha|validate|verify/i.test(node.id)) {
-                                    shouldCheckCaptcha = true;
-                                }
-                                
-                                // 检查是否与滑块验证码相关
-                                if (node.className && /slider|drag|slide|puzzle/i.test(node.className) ||
-                                    node.id && /slider|drag|slide|puzzle/i.test(node.id) ||
-                                    node.querySelector('.slider, .drag, [class*="slider"], [class*="drag"], [id*="slider"], [id*="drag"]')) {
-                                    shouldCheckSlider = true;
-                                }
-                                
-                                // 检查是否与点选验证码相关
-                                if (node.className && /click|point|select/i.test(node.className) ||
-                                    node.id && /click|point|select/i.test(node.id) ||
-                                    node.querySelector('.click-captcha, .point-captcha, [class*="clickCaptcha"], [class*="pointCaptcha"]')) {
-                                    shouldCheckClickCaptcha = true;
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // 如果有相关变化，延迟执行检查
-                if (shouldCheckCaptcha) {
-                    setTimeout(() => checkForCaptcha(), config.popupCheckDelay);
-                }
-                
-                if (shouldCheckSlider && config.captchaTypes.slider) {
-                    setTimeout(() => checkForSliderCaptcha(), config.popupCheckDelay);
-                }
-                
-                if (shouldCheckClickCaptcha && config.captchaTypes.clickCaptcha) {
-                    setTimeout(() => checkForClickCaptcha(), config.popupCheckDelay);
-                }
-            }, config.throttleInterval)
-        );
-        
-        // 开始监听
-        observer.observe(document.documentElement, config.mutationObserverConfig);
     }
 })(); 
