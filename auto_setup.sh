@@ -51,7 +51,7 @@ stop_server() {
     
     # 查找运行在指定端口的进程
     PID=$(lsof -t -i:$PORT 2>/dev/null)
-    
+        
     if [ -n "$PID" ]; then
         echo -e "${YELLOW}找到运行在端口 $PORT 的进程 (PID: $PID)，正在终止...${NC}"
         kill -15 $PID 2>/dev/null || kill -9 $PID 2>/dev/null
@@ -67,7 +67,7 @@ stop_server() {
         echo -e "${YELLOW}未发现运行中的验证码识别服务${NC}"
     fi
 }
-
+    
 # 设置虚拟环境
 setup_venv() {
     echo -e "${BLUE}设置Python虚拟环境...${NC}"
@@ -90,8 +90,8 @@ setup_venv() {
         echo -e "${GREEN}✓ 虚拟环境已激活${NC}"
     else
         echo -e "${RED}错误: 无法激活虚拟环境${NC}"
-        exit 1
-    fi
+    exit 1
+fi
 }
 
 # 安装依赖
@@ -155,7 +155,7 @@ start_server() {
 # 清理旧的日志和缓存文件
 cleanup_old_files() {
     echo -e "${BLUE}清理旧的日志和缓存文件...${NC}"
-    
+
     # 删除超过30天的日志文件
     find "$LOG_DIR" -name "*.log.*" -type f -mtime +30 -delete 2>/dev/null
     
@@ -172,9 +172,9 @@ main() {
     # 如果是停止命令
     if [ "$STOP_COMMAND" = "stop" ]; then
         stop_server
-        exit 0
-    fi
-    
+    exit 0
+fi
+
     # 如果是清理命令
     if [ "$STOP_COMMAND" = "cleanup" ]; then
         cleanup_old_files

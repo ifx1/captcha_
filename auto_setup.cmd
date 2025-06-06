@@ -160,8 +160,8 @@ goto :eof
 :: 安装依赖
 :install_dependencies
 echo %BLUE%安装依赖...%NC%
-
-:: 卸载常规OpenCV并安装无头版本
+    
+    :: 卸载常规OpenCV并安装无头版本
 %PIP_CMD% uninstall -y opencv-python >nul 2>nul
 %PIP_CMD% install opencv-python-headless ddddocr fastapi uvicorn numpy Pillow
 if %ERRORLEVEL% neq 0 (
