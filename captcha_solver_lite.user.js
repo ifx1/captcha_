@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         极简验证码识别工具
 // @namespace    http://tampermonkey.net/
-// @version      1.8
+// @version      0.9
 // @description  极简版验证码识别工具，支持图形验证码和滑块验证码
 // @author       laozig
 // @license      MIT
@@ -60,7 +60,8 @@
         
         // 显示服务器连接信息
         if (config.debug) {
-            console.log('[验证码] 正在测试服务器连接...');
+            console.log('[验证码] 服务器地址: ' + OCR_SERVER);
+            console.log('[验证码] 调试模式已开启');
             
             // 测试服务器连接
             testServerConnection();
@@ -69,7 +70,7 @@
     
     // 测试服务器连接
     function testServerConnection() {
-        if (config.debug) console.log('[验证码] 正在测试服务器连接...');
+        console.log('[验证码] 正在测试服务器连接...');
         
         GM_xmlhttpRequest({
             method: 'GET',
@@ -78,17 +79,17 @@
             onload: function(response) {
                 try {
                     const result = JSON.parse(response.responseText);
-                    if (config.debug) console.log('[验证码] 服务器连接成功:', result);
+                    console.log('[验证码] 服务器连接成功:', result);
                 } catch (e) {
-                    if (config.debug) console.log('[验证码] 服务器响应解析错误:', e);
+                    console.log('[验证码] 服务器响应解析错误:', e);
                 }
             },
             onerror: function(error) {
-                if (config.debug) console.log('[验证码] 服务器连接失败:', error);
-                if (config.debug) console.log('[验证码] 请确认服务器地址是否正确，并检查服务器是否已启动');
+                console.log('[验证码] 服务器连接失败:', error);
+                console.log('[验证码] 请确认服务器地址是否正确，并检查服务器是否已启动');
             },
             ontimeout: function() {
-                if (config.debug) console.log('[验证码] 服务器连接超时，请检查服务器是否已启动');
+                console.log('[验证码] 服务器连接超时，请检查服务器是否已启动');
             }
         });
     }
@@ -504,7 +505,7 @@
         getImageBase64(captchaImg)
             .then(base64 => {
                 if (!base64) {
-                    if (config.debug) console.error('[验证码] 获取图片数据失败');
+                    console.error('[验证码] 获取图片数据失败');
                     return;
                 }
                 
@@ -512,7 +513,7 @@
                 recognizeCaptcha(base64, captchaInput);
             })
             .catch(err => {
-                if (config.debug) console.error('[验证码] 处理图片时出错:', err);
+                console.error('[验证码] 处理图片时出错:', err);
             });
     }
     
@@ -941,7 +942,7 @@
                 ctx.drawImage(img, 0, 0);
                 return canvas.toDataURL('image/png').split(',')[1];
             } catch (e) {
-                if (config.debug) console.error('[验证码] 绘制图片到Canvas失败，可能是跨域问题');
+                console.error('[验证码] 绘制图片到Canvas失败，可能是跨域问题');
                 
                 // 尝试直接获取src
                 if (img.src && img.src.startsWith('data:image')) {
@@ -952,7 +953,7 @@
                 return await fetchImage(img.src);
             }
         } catch (e) {
-            if (config.debug) console.error('[验证码] 获取图片base64失败:', e);
+            console.error('[验证码] 获取图片base64失败:', e);
             return null;
         }
     }
@@ -1035,7 +1036,7 @@
             },
             onerror: function(error) {
                 if (config.debug) console.log('[验证码] OCR请求失败:', error);
-                if (config.debug) console.log('[验证码] 请检查服务器地址是否正确，以及服务器是否已启动');
+                console.log('[验证码] 请检查服务器地址是否正确，以及服务器是否已启动');
                 
                 // 清除当前处理的验证码
                 currentCaptchaImg = null;
@@ -1043,7 +1044,7 @@
             },
             ontimeout: function() {
                 if (config.debug) console.log('[验证码] OCR请求超时');
-                if (config.debug) console.log('[验证码] 请检查服务器是否已启动，网络连接是否正常');
+                console.log('[验证码] 请检查服务器是否已启动，网络连接是否正常');
                 
                 // 清除当前处理的验证码
                 currentCaptchaImg = null;
@@ -1216,7 +1217,7 @@
                             if (container) break;
                         }
                     } catch (e) {
-                        if (config.debug) console.error('[验证码] 检查iframe时出错:', e);
+                        // 可能有跨域问题，忽略错误
                     }
                     if (container) break;
                 }
@@ -1400,9 +1401,8 @@
                 return distance;
             }
         } catch (e) {
-            if (config.debug) console.error('[验证码] 计算滑动距离时出错:', e);
-            // 尝试使用传统方法计算
-            return defaultDistance || 150;
+            console.error('[验证码] 计算滑动距离时出错:', e);
+            return null;
         }
     }
     
@@ -1469,13 +1469,13 @@
                                     fullBase64 = canvas.toDataURL('image/png').split(',')[1];
                                     if (config.debug) console.log('[验证码] 获取了容器背景图');
                                 } catch (e) {
-                                    if (config.debug) console.error('[验证码] 获取容器背景图失败:', e);
+                                    console.error('[验证码] 获取容器背景图失败:', e);
                                 }
                             }
                         }
                     }
                 } catch (e) {
-                    if (config.debug) console.error('[验证码] 获取容器截图失败:', e);
+                    console.error('[验证码] 获取容器截图失败:', e);
                 }
             }
             
@@ -1508,16 +1508,16 @@
                                     if (config.debug) console.log('[验证码] 服务器返回的滑动距离:', result.data.x);
                                     resolve(result.data.x);
                                 } else {
-                                    if (config.debug) console.error('[验证码] 服务器分析失败:', result.message || '未知错误');
+                                    console.error('[验证码] 服务器分析失败:', result.message || '未知错误');
                                     resolve(null);
                                 }
                             } catch (e) {
-                                if (config.debug) console.error('[验证码] 解析服务器响应时出错:', e);
+                                console.error('[验证码] 解析服务器响应时出错:', e);
                                 resolve(null);
                             }
                         },
                         onerror: function(error) {
-                            if (config.debug) console.error('[验证码] 滑块分析请求失败:', error);
+                            console.error('[验证码] 滑块分析请求失败:', error);
                             resolve(null);
                         }
                     });
@@ -1527,7 +1527,7 @@
                 return null;
             }
         } catch (e) {
-            if (config.debug) console.error('[验证码] API分析滑块图片时出错:', e);
+            console.error('[验证码] API分析滑块图片时出错:', e);
             return null;
         }
     }
@@ -1657,7 +1657,7 @@
                     slider.dispatchEvent(createMouseEvent('mousemove', newX, newY));
                     
                     if (config.debug && step % 5 === 0) {
-                        if (config.debug) console.log(`[验证码] 拖动进度: ${Math.round(progress * 100)}%`);
+                        console.log(`[验证码] 拖动进度: ${Math.round(progress * 100)}%`);
                     }
                     
                     step++;
@@ -1687,7 +1687,7 @@
                 }
             }, stepDelay);
         } catch (e) {
-            if (config.debug) console.error('[验证码] 模拟滑块拖动时出错:', e);
+            console.error('[验证码] 模拟滑块拖动时出错:', e);
         }
     }
     
